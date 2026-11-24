@@ -97,3 +97,12 @@ Read the code in this order. Each file is short on purpose.
 5. The reconciler repairs lost work: expired leases (dead worker) and `DISPATCHED` jobs whose message vanished go back to `QUEUED`. Interactive traffic beats batch for the shared provider budget because batch may only use a fraction of the slots.
 
 **Questions:** "How do you stop one tenant from starving others?" "What is DRR?" "How do you do leader election without ZooKeeper?" "What is backpressure and where does it live in your design?" "What happens to in-flight work when the leader dies?"
+
+## 12. Deploying (step 4: `infra/terraform/`, `deploy/prod/`, `.github/workflows/release.yml`)
+1. Terraform describes the servers as code: you read a `plan` before anything is created, and `terraform destroy` removes it all.
+2. No SSH and no stored AWS keys: you reach the server through SSM Session Manager, and GitHub Actions proves its identity to AWS with OIDC (a short-lived token) to assume a role that can only run commands on that one instance.
+3. Secrets live in SSM Parameter Store, never in git or in Terraform state. Terraform creates empty slots; you fill them once.
+4. A rolling deploy restarts one gateway at a time, waits for `/readyz` (which checks Redis and Postgres), and rolls back to the previous image tag if the check fails. NGINX looks up container IPs only at start/reload, so the script reloads it after each restart.
+5. Multi-arch images (amd64 + arm64) let the same tag run on a Graviton server and on a laptop. Memory limits per container stop one greedy process from taking a 2 GB machine down; swap is the safety net.
+
+**Questions:** "How do you deploy without downtime?" "How do you manage secrets?" "Why OIDC instead of access keys?" "What does your rollback do and what can it not undo?" (schema changes) "How do you size a small server?" (measure peak memory, add headroom)

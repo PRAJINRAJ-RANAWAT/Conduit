@@ -1,0 +1,8 @@
+NOTICE:  database "restore_test" does not exist, skipping
+table            live   restored
+tenants             7         7
+api_keys           16        16
+jobs             1101      1101
+usage           14138     14138
+prompt_versions      5         5
+RESTORE TEST PASSED (row counts match)
