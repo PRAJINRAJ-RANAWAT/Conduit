@@ -15,12 +15,15 @@ H = {"Authorization": "Bearer key-alice"}
 
 @pytest.fixture(scope="module")
 def stack(mock_llm):
-    """Start one worker process; each test gets a clean queue + table."""
+    """Start one dispatcher + one worker process; each test gets a clean queue + table."""
     worker = subprocess.Popen([sys.executable, "-m", "app.worker"], env=dict(os.environ))
+    dispatcher = subprocess.Popen([sys.executable, "-m", "app.dispatcher"],
+                                  env={**os.environ, "DISPATCH_INTERVAL": "0.1"})
     with TestClient(main.app) as client:        # runs startup -> opens the DB pool
         time.sleep(2)
         yield client
     worker.kill()
+    dispatcher.kill()
 
 
 @pytest.fixture(autouse=True)
@@ -79,8 +82,9 @@ def test_always_failing_job_goes_dead_after_3_attempts_and_into_dlq(stack):
 def test_duplicate_message_does_not_run_job_twice(stack):
     jid = submit(stack).json()["id"]
     wait_for(stack, jid, "SUCCEEDED")
+    seq = db.run("SELECT dispatch_seq FROM jobs WHERE id=%s", (jid,))[0]["dispatch_seq"]
     for _ in range(3):                                   # inject duplicate deliveries
-        mq.publisher.publish(mq.EXCHANGE, "work", {"job_id": jid})
+        mq.publisher.publish(mq.EXCHANGE, "work", {"job_id": jid, "seq": seq})
     time.sleep(1.5)
     assert stack.get(f"/jobs/{jid}", headers=H).json()["attempts"] == 1
 

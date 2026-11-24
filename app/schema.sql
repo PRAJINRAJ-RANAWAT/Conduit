@@ -51,3 +51,17 @@ CREATE TABLE IF NOT EXISTS usage (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS usage_tenant_time ON usage (tenant, created_at);
+
+-- Step 3: fair scheduling. The API only SAVES jobs; the dispatcher moves them to RabbitMQ.
+-- Status flow: QUEUED -> DISPATCHED (published) -> RUNNING -> SUCCEEDED | RETRYING -> ... | DEAD
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS priority int NOT NULL DEFAULT 0;       -- 1 = interactive, 0 = batch
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dispatch_seq int NOT NULL DEFAULT 0;   -- +1 on every dispatch; messages carry it, so stale messages are ignored
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dispatched_at timestamptz;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS started_at timestamptz;                -- first time a worker started it
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS finished_at timestamptz;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;          -- a RUNNING job whose lease expires is given back to the queue
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS weight int NOT NULL DEFAULT 1;      -- fair-share weight
+-- the dispatcher's two hot queries: "oldest queued per tenant" and "how many are in flight"
+CREATE INDEX IF NOT EXISTS jobs_queued ON jobs (tenant, priority DESC, created_at) WHERE status = 'QUEUED';
+CREATE INDEX IF NOT EXISTS jobs_inflight ON jobs (status) WHERE status IN ('DISPATCHED', 'RUNNING', 'RETRYING');

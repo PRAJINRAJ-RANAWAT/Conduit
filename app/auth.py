@@ -48,9 +48,9 @@ async def revoke(r, key: str):
     await r.publish(CHANNEL, h)
 
 
-def create_tenant(name: str, tpm: int, conc: int, key: str):
-    db.run("INSERT INTO tenants (name, tpm, conc) VALUES (%s,%s,%s) "
-           "ON CONFLICT (name) DO UPDATE SET tpm=%s, conc=%s", (name, tpm, conc, tpm, conc))
+def create_tenant(name: str, tpm: int, conc: int, key: str, weight: int = 1):
+    db.run("INSERT INTO tenants (name, tpm, conc, weight) VALUES (%s,%s,%s,%s) "
+           "ON CONFLICT (name) DO UPDATE SET tpm=%s, conc=%s, weight=%s", (name, tpm, conc, weight, tpm, conc, weight))
     db.run("INSERT INTO api_keys (key_hash, tenant, prefix) VALUES (%s,%s,%s) "
            "ON CONFLICT (key_hash) DO UPDATE SET revoked=false", (hash_key(key), name, key[:8]))
     _cache.clear()
