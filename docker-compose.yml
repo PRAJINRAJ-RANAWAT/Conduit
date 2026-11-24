@@ -1,12 +1,43 @@
-# Infrastructure only. Gateway/worker/UI are added to this file in later steps.
+# `docker compose up -d --build` starts the whole stack.
+x-app: &app            # settings shared by every Python service
+  build: .
+  environment:
+    REDIS_URL: redis://redis:6379
+    DATABASE_URL: postgresql://conduit:conduit@postgres:5432/conduit
+    RABBIT_URL: amqp://guest:guest@rabbitmq:5672/%2F
+    PROVIDER_A_URL: http://mock-a:9000
+    PROVIDER_B_URL: http://mock-b:9000
+    CORS_ORIGINS: http://localhost:3000
+  depends_on:
+    redis: {condition: service_healthy}
+    rabbitmq: {condition: service_healthy}
+    postgres: {condition: service_healthy}
+
 services:
   redis:
     image: redis:7
     ports: ["6379:6379"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 3s, retries: 20}
   rabbitmq:
     image: rabbitmq:3.13-management
     ports: ["5672:5672", "15672:15672"]
+    healthcheck: {test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"], interval: 5s, retries: 30}
   postgres:
     image: postgres:16
     environment: {POSTGRES_PASSWORD: conduit, POSTGRES_USER: conduit, POSTGRES_DB: conduit}
     ports: ["5432:5432"]
+    healthcheck: {test: ["CMD", "pg_isready", "-U", "conduit"], interval: 3s, retries: 20}
+  mock-a:                      # fake LLM provider A (port 9000 on your machine)
+    build: .
+    command: uvicorn app.mock_provider:app --host 0.0.0.0 --port 9000
+    ports: ["9000:9000"]
+  mock-b:                      # fake LLM provider B
+    build: .
+    command: uvicorn app.mock_provider:app --host 0.0.0.0 --port 9000
+    ports: ["9001:9000"]
+  gateway:
+    <<: *app
+    ports: ["8080:8080"]
+  worker:
+    <<: *app
+    command: python -m app.worker

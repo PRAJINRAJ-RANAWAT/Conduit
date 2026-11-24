@@ -1,0 +1,6 @@
+A healthy: (200, 'A')
+A down: [(200, 'B'), (200, 'B'), (200, 'B'), (200, 'B'), (200, 'B')]
+A and B down: HTTP 503, Retry-After=10, in 0.02s
+A and B healthy again; waiting 11s for the breaker cooldown
+after recovery: [(200, 'A'), (200, 'A'), (200, 'A')]
+RESULT: PASS  failover to B, fast 503 when both down, A restored

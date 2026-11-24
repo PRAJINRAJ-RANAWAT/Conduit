@@ -1,0 +1,6 @@
+.venv
+.git
+__pycache__
+web/node_modules
+web/.next
+bench/results

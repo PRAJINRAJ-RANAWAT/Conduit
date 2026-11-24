@@ -7,4 +7,3 @@ psycopg[binary]
 psycopg_pool
 pytest
 pytest-asyncio
-fakeredis

@@ -1,0 +1,6 @@
+starting from a clean worker
+a job is RUNNING -> kill -9 the worker now
+states right after the kill: ['QUEUED', 'QUEUED', 'QUEUED', 'QUEUED', 'RUNNING']
+starting a fresh worker
+final: [('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 2)]
+RESULT: PASS  5 jobs, lost=0, retaken after crash=1

@@ -14,9 +14,9 @@ def create_job(body: dict, response: Response, tenant: dict = Depends(get_tenant
         raise HTTPException(400, "Idempotency-Key header is required")
     # Same (tenant, key) twice -> DO NOTHING, so we get no new row and return the old job.
     rows = db.run(
-        """INSERT INTO jobs (tenant, idem_key, prompt, fail_times) VALUES (%s,%s,%s,%s)
+        """INSERT INTO jobs (tenant, idem_key, prompt, fail_times, work_secs) VALUES (%s,%s,%s,%s,%s)
            ON CONFLICT (tenant, idem_key) DO NOTHING RETURNING id, status""",
-        (tenant["name"], idempotency_key, body["prompt"], body.get("fail_times", 0)))
+        (tenant["name"], idempotency_key, body["prompt"], body.get("fail_times", 0), body.get("work_secs", 0)))
     if not rows:
         job = db.run("SELECT id, status FROM jobs WHERE tenant=%s AND idem_key=%s",
                      (tenant["name"], idempotency_key))[0]

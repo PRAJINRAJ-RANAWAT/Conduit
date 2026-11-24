@@ -5,6 +5,7 @@ Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle
 import os
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
+from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 
 import time
@@ -23,6 +24,15 @@ async def lifespan(_):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(redis.RedisError)
+async def redis_down(request, exc):
+    """Redis holds the limiter and cache. If it is unreachable, fail fast and clearly."""
+    return JSONResponse({"detail": "rate limiter unavailable"}, status_code=503,
+                        headers={"Retry-After": "5"})
+
+
 app.include_router(jobs_api.router)
 app.include_router(prompts_api.router)
 r = redis.from_url(REDIS_URL, decode_responses=True)

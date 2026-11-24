@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   UNIQUE (tenant, idem_key)
 );
 
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS work_secs int NOT NULL DEFAULT 0;  -- demo switch: a slow job
+
 -- Prompt versions are IMMUTABLE: a trigger refuses UPDATE and DELETE. A change = a new version.
 CREATE TABLE IF NOT EXISTS prompt_versions (
   name        text NOT NULL,

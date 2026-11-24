@@ -1,0 +1,7 @@
+rabbitmq stopped
+chat while rabbitmq is down: HTTP 200
+job submit while rabbitmq is down: HTTP 503
+rabbitmq started; waiting for it to be healthy
+retry with the same key: HTTP 200
+final: [('QUEUED', 0), ('SUCCEEDED', 1)]
+RESULT: FAIL  503_while_down=True, finished_after_recovery=False

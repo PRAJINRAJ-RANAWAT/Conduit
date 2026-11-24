@@ -7,6 +7,7 @@ Why this is safe:
 """
 import json
 import os
+import time
 import httpx
 from app import db, mq
 
@@ -27,6 +28,7 @@ def claim(job_id: str, redelivered: bool):
 def do_work(job) -> dict:
     if job["attempts"] <= job["fail_times"]:      # demo switch: simulate a failing job
         raise RuntimeError(f"simulated failure on attempt {job['attempts']}")
+    time.sleep(job["work_secs"])                  # demo switch: pretend the job is slow
     body = {"messages": [{"role": "user", "content": job["prompt"]}], "max_tokens": 20}
     for url in PROVIDER_URLS:
         try:
@@ -58,9 +60,7 @@ def handle(pub, ch, method, props, body):
     ch.basic_ack(method.delivery_tag)              # 2. ...and only now ack
 
 
-def main():
-    db.init()
-    pub = mq.Publisher()
+def consume(pub):
     conn = mq.connect()
     ch = conn.channel()
     mq.declare(ch)
@@ -68,6 +68,17 @@ def main():
     ch.basic_consume(mq.WORK, lambda c, m, p, b: handle(pub, c, m, p, b))
     print("worker ready", flush=True)
     ch.start_consuming()
+
+
+def main():
+    db.init()
+    pub = mq.Publisher()
+    while True:                                    # if RabbitMQ (or anything) drops, wait and reconnect
+        try:
+            consume(pub)
+        except Exception as e:
+            print(f"worker lost its connection ({type(e).__name__}); retrying in 3s", flush=True)
+            time.sleep(3)
 
 
 if __name__ == "__main__":

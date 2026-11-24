@@ -1,0 +1,7 @@
+baseline chat: 200
+redis stopped
+chat while redis is down: HTTP 500 after 0.12s
+job submit while redis is down: HTTP 202
+redis started
+chat works again: True
+RESULT: PASS  chat_down=HTTP 500, fast=True, jobs_ok=True, recovered=True
