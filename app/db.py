@@ -16,7 +16,11 @@ def init():
     """Open the pool and create tables."""
     pool.open()
     pool.wait()
-    run(Path(__file__).with_name("schema.sql").read_text())
+    # Many processes start at once and all run the schema. A transaction-level advisory lock makes them take
+    # turns (it is held until COMMIT), otherwise two "CREATE TABLE IF NOT EXISTS" can collide.
+    with pool.connection() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(777)")
+        conn.execute(Path(__file__).with_name("schema.sql").read_text())
 
 
 def run(sql: str, args=()):
