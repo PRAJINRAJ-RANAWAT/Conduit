@@ -28,3 +28,9 @@ pytest
 3. Batch jobs via a queue (RabbitMQ) + workers
 4. Provider fallback
 5. Load tests with k6, then write up the numbers
+
+## Job queue (step 2)
+`POST /jobs` (needs `Idempotency-Key`) saves the job in Postgres and publishes it to RabbitMQ.
+A worker (`python -m app.worker`) runs it, saves the result, then acks. Failures retry after
+5s / 30s via TTL delay queues; the 3rd failure puts the job in the DLQ. `./demo_queue.sh` shows it.
+Ports: gateway 8080, mock LLM 9000 (8000 on this machine was taken by another program).

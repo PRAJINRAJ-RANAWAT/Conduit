@@ -2,7 +2,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app import main
+from app import auth, main
 from app.mock_provider import app as provider_app
 
 

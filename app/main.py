@@ -5,22 +5,24 @@ Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle
 import os
 import httpx
 import redis.asyncio as redis
-from fastapi import FastAPI, Header, HTTPException, Response
+from contextlib import asynccontextmanager
+from fastapi import Depends, FastAPI, HTTPException, Response
 
-from app import cache, stats
+from app import cache, db, jobs_api, stats
+from app.auth import get_tenant
 from app.limiter import Limiter
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 PROVIDER_URL = os.getenv("PROVIDER_URL", "http://localhost:9000")
 
-# Kept in a dict until step 4 moves tenants into Postgres.
-# tpm = LLM tokens per minute, conc = max calls running at once.
-TENANTS = {
-    "key-alice": {"name": "alice", "tpm": 60_000, "conc": 20},
-    "key-bob": {"name": "bob", "tpm": 300, "conc": 2},
-}
+@asynccontextmanager
+async def lifespan(_):
+    db.init()
+    yield
 
-app = FastAPI()
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(jobs_api.router)
 r = redis.from_url(REDIS_URL, decode_responses=True)
 limiter = Limiter(r)
 
@@ -36,10 +38,7 @@ def reject(why: str, retry_after: int):
 
 
 @app.post("/v1/chat/completions")
-async def chat(body: dict, response: Response, authorization: str = Header(default="")):
-    tenant = TENANTS.get(authorization.removeprefix("Bearer "))
-    if not tenant:
-        raise HTTPException(401, "bad api key")
+async def chat(body: dict, response: Response, tenant: dict = Depends(get_tenant)):
     name, tpm = tenant["name"], tenant["tpm"]
     await stats.incr(r, "requests")
 
