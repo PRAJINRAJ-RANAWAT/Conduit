@@ -15,3 +15,16 @@ os.environ["PROVIDER_URL"] = "http://localhost:9100"
 with psycopg.connect("postgresql://conduit:conduit@localhost:5432/conduit", autocommit=True) as c:
     if not c.execute("SELECT 1 FROM pg_database WHERE datname='conduit_test'").fetchone():
         c.execute("CREATE DATABASE conduit_test")
+
+import subprocess, sys, time
+import pytest
+
+
+@pytest.fixture(scope="session")
+def mock_llm():
+    """A real mock-LLM process on :9100 for tests that call the provider."""
+    p = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.mock_provider:app",
+                          "--port", "9100", "--log-level", "warning"])
+    time.sleep(1.5)
+    yield
+    p.kill()

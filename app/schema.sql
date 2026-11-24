@@ -12,3 +12,17 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at  timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant, idem_key)
 );
+
+-- Prompt versions are IMMUTABLE: a trigger refuses UPDATE and DELETE. A change = a new version.
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  name        text NOT NULL,
+  version     int  NOT NULL,
+  template    text NOT NULL,          -- contains {text} where the input goes
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (name, version)
+);
+CREATE OR REPLACE FUNCTION forbid_change() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION 'prompt versions are immutable'; END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS prompt_immutable ON prompt_versions;
+CREATE TRIGGER prompt_immutable BEFORE UPDATE OR DELETE ON prompt_versions
+  FOR EACH ROW EXECUTE FUNCTION forbid_change();

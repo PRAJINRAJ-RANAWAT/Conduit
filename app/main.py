@@ -8,7 +8,7 @@ import redis.asyncio as redis
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Response
 
-from app import cache, db, jobs_api, stats
+from app import cache, db, jobs_api, prompts_api, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
 
@@ -18,11 +18,13 @@ PROVIDER_URL = os.getenv("PROVIDER_URL", "http://localhost:9000")
 @asynccontextmanager
 async def lifespan(_):
     db.init()
+    prompts_api.seed()
     yield
 
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(jobs_api.router)
+app.include_router(prompts_api.router)
 r = redis.from_url(REDIS_URL, decode_responses=True)
 limiter = Limiter(r)
 

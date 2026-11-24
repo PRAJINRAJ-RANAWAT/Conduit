@@ -1,0 +1,82 @@
+[
+ {
+  "text": "I love this product, it works perfectly",
+  "expected": "positive"
+ },
+ {
+  "text": "Fantastic service and very friendly staff",
+  "expected": "positive"
+ },
+ {
+  "text": "Absolutely wonderful experience",
+  "expected": "positive"
+ },
+ {
+  "text": "The quality is outstanding",
+  "expected": "positive"
+ },
+ {
+  "text": "Great value, I would buy it again",
+  "expected": "positive"
+ },
+ {
+  "text": "Delivery was fast and the item is excellent",
+  "expected": "positive"
+ },
+ {
+  "text": "Such a delightful surprise, highly recommend",
+  "expected": "positive"
+ },
+ {
+  "text": "Support solved my problem in minutes",
+  "expected": "positive"
+ },
+ {
+  "text": "Beautiful design and easy to use",
+  "expected": "positive"
+ },
+ {
+  "text": "Best purchase I have made this year",
+  "expected": "positive"
+ },
+ {
+  "text": "This is terrible and it broke in a day",
+  "expected": "negative"
+ },
+ {
+  "text": "Awful service, nobody answered my emails",
+  "expected": "negative"
+ },
+ {
+  "text": "Very disappointing experience",
+  "expected": "negative"
+ },
+ {
+  "text": "The quality is poor and cheap",
+  "expected": "negative"
+ },
+ {
+  "text": "Total waste of money, do not buy",
+  "expected": "negative"
+ },
+ {
+  "text": "Delivery was late and the box was damaged",
+  "expected": "negative"
+ },
+ {
+  "text": "Such an annoying app, it keeps crashing",
+  "expected": "negative"
+ },
+ {
+  "text": "Support ignored my problem for weeks",
+  "expected": "negative"
+ },
+ {
+  "text": "Ugly design and impossible to use",
+  "expected": "negative"
+ },
+ {
+  "text": "Worst purchase I have made this year",
+  "expected": "negative"
+ }
+]

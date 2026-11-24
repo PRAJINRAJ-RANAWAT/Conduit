@@ -34,3 +34,9 @@ pytest
 A worker (`python -m app.worker`) runs it, saves the result, then acks. Failures retry after
 5s / 30s via TTL delay queues; the 3rd failure puts the job in the DLQ. `./demo_queue.sh` shows it.
 Ports: gateway 8080, mock LLM 9000 (8000 on this machine was taken by another program).
+
+## Prompt optimisation (step 3)
+Prompt versions are immutable (a Postgres trigger refuses edits). `POST /prompts/optimise` scores every
+version on a 20-example golden set and picks the fewest-token version within `epsilon` of the baseline.
+Quality comes from a deterministic *simulator* in the mock LLM, and prices are ASSUMED, so the
+"% saved" shows the pipeline works, not real-model savings. `./demo_prompts.sh` prints the report.

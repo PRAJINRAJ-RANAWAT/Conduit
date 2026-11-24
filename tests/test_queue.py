@@ -14,16 +14,13 @@ H = {"Authorization": "Bearer key-alice"}
 
 
 @pytest.fixture(scope="module")
-def stack():
-    """Start mock LLM (:9100) and one worker; give each test a clean queue + table."""
-    env = dict(os.environ)
-    mock = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.mock_provider:app",
-                             "--port", "9100", "--log-level", "warning"], env=env)
-    worker = subprocess.Popen([sys.executable, "-m", "app.worker"], env=env)
+def stack(mock_llm):
+    """Start one worker process; each test gets a clean queue + table."""
+    worker = subprocess.Popen([sys.executable, "-m", "app.worker"], env=dict(os.environ))
     with TestClient(main.app) as client:        # runs startup -> opens the DB pool
         time.sleep(2)
         yield client
-    worker.kill(); mock.kill()
+    worker.kill()
 
 
 @pytest.fixture(autouse=True)
