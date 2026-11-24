@@ -1,11 +1,15 @@
 """Postgres helper. Plain SQL, no ORM: run("SELECT ... WHERE id=%s", (id,)) -> list of dicts."""
 import os
 from pathlib import Path
+
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 URL = os.getenv("DATABASE_URL", "postgresql://conduit:conduit@localhost:5432/conduit")
-pool = ConnectionPool(URL, min_size=1, max_size=10, open=False, kwargs={"row_factory": dict_row})
+# timeout=2: if Postgres is down, give up after 2s (the API then answers 503) instead of hanging.
+# check=...: before handing out a pooled connection, test it, so dead connections are replaced.
+pool = ConnectionPool(URL, min_size=1, max_size=10, open=False, timeout=2,
+                      check=ConnectionPool.check_connection, kwargs={"row_factory": dict_row})
 
 
 def init():

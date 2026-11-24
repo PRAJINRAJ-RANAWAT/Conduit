@@ -4,13 +4,15 @@ Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle
 """
 import asyncio
 import os
-import redis.asyncio as redis
+import time
 from contextlib import asynccontextmanager
+
+import psycopg
+import redis.asyncio as redis
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 
-import time
 from app import auth, cache, db, jobs_api, mq, prompts_api, providers, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
@@ -22,7 +24,9 @@ async def lifespan(_):
     db.init()
     auth.seed()
     prompts_api.seed()
+    listener = asyncio.create_task(auth.listen_for_revocations(r))   # revoked keys, from all replicas
     yield
+    listener.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -40,6 +44,24 @@ async def redis_down(request, exc):
                         headers={"Retry-After": "5"})
 
 
+
+
+@app.exception_handler(psycopg.Error)
+async def db_down(request, exc):
+    """Postgres unreachable or its pool exhausted: fail fast and clearly."""
+    return JSONResponse({"detail": "database unavailable"}, status_code=503,
+                        headers={"Retry-After": "5"})
+
+
+@app.post("/admin/keys/revoke")
+async def revoke_key(body: dict, x_admin_token: str = Header(default="")):
+    """Revoke an API key everywhere. Protected by a shared admin token (set ADMIN_TOKEN in prod)."""
+    if x_admin_token != os.getenv("ADMIN_TOKEN", "dev-admin-token"):
+        raise HTTPException(403, "bad admin token")
+    await auth.revoke(r, body["key"])
+    return {"revoked": True}
+
+
 app.include_router(jobs_api.router)
 app.include_router(prompts_api.router)
 r = redis.from_url(REDIS_URL, decode_responses=True)
@@ -54,6 +76,17 @@ def estimate_tokens(body: dict) -> int:
 
 def reject(why: str, retry_after: int):
     return HTTPException(429, why, headers={"Retry-After": str(max(retry_after, 1))})
+
+
+async def record_usage(tenant, provider, in_tokens, out_tokens, latency_ms):
+    """Runs AFTER the answer was sent. If Postgres is down we drop the row and count it. We must never
+    let an error escape here: an exception after the response started breaks the connection (nginx 502)."""
+    try:
+        await asyncio.to_thread(
+            db.run, "INSERT INTO usage (tenant, provider, input_tokens, output_tokens, latency_ms) "
+            "VALUES (%s,%s,%s,%s,%s)", (tenant, provider, in_tokens, out_tokens, latency_ms))
+    except Exception:
+        await stats.incr(r, "usage_rows_dropped")
 
 
 @app.post("/v1/chat/completions")
@@ -83,7 +116,7 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
             provider = "cache"
         else:
             try:
-                result, provider = await providers.call(body)
+                result, provider = await providers.call(body, r)
             except providers.AllProvidersDown:
                 await limiter.settle(name, tpm, cost, 0)       # nothing was used: refund
                 raise HTTPException(503, "all providers are down", headers={"Retry-After": "10"})
@@ -95,9 +128,8 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
         response.headers["X-RateLimit-Remaining-Tokens"] = str(left)
         response.headers["X-Conduit-Provider"] = provider
         usage = result["usage"]
-        bg.add_task(db.run, "INSERT INTO usage (tenant, provider, input_tokens, output_tokens, latency_ms) "
-                    "VALUES (%s,%s,%s,%s,%s)", (name, provider, usage["prompt_tokens"],
-                    usage["completion_tokens"], int((time.time() - started) * 1000)))
+        bg.add_task(record_usage, name, provider, usage["prompt_tokens"], usage["completion_tokens"],
+                    int((time.time() - started) * 1000))
         return result
     finally:
         await limiter.release_slot(name, slot)
@@ -112,4 +144,4 @@ async def get_stats():
     jobs = await asyncio.to_thread(db.run, "SELECT status, count(*) AS n FROM jobs GROUP BY status")
     return {**counts, "queue_depth": queue, "dlq_size": dlq,
             "jobs": {j["status"]: j["n"] for j in jobs},
-            "circuits": {n: b.state for n, b in providers.breakers.items()}}
+            "circuits": await providers.states(r)}

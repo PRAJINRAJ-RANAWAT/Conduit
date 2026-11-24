@@ -1,0 +1,8 @@
+date: 2026-11-24T06:36:11Z
+cpu: Apple M2 (8 cores)
+ram: 8 GB
+docker VM memory: 4108828672
+topology: 2 gateways behind nginx, 1 worker
+worker containers running: 1
+gateway containers running: 2
+mock LLM A/B: 0.2s sleep; Redis/RabbitMQ/Postgres in Docker

@@ -8,7 +8,9 @@ Why this is safe:
 import json
 import os
 import time
+
 import httpx
+
 from app import db, mq
 
 # Try provider A, then B (the gateway has a circuit breaker; the worker just falls back).

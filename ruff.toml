@@ -1,0 +1,9 @@
+# Lint settings. Default rule set (E, F) minus a few that fight our teaching-style comments.
+extend-exclude = ["web", "bench/results"]
+[lint]
+select = ["E", "F"]
+ignore = ["E501", "E731", "E701", "E702"]   # long lines, `x = lambda`, one-line `if`s are fine here
+[lint.per-file-ignores]
+"chaos/*" = ["F403", "F405", "E402"]   # chaos scripts use `from lib import *` on purpose
+"tests/*" = ["E402"]
+"bench/*" = ["E402"]

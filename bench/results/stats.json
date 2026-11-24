@@ -1,6 +1,6 @@
 {
- "capacity_p99_ms": 295.3,
- "capacity_rps": 259,
+ "capacity_p99_ms": 309.1,
+ "capacity_rps": 271,
  "jobs_submitted": 1101,
  "jobs_lost": 0
 }

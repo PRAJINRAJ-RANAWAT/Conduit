@@ -1,0 +1,8 @@
+postgres stopped
+chat, cached key (6 calls, both replicas): [200, 200, 200, 200, 200, 200]
+chat, uncached key: 502 after 0.7s
+POST /jobs: 502 after 0.3s
+postgres started; waiting for healthy
+uncached-key chat works again: True
+job created and finished after recovery: True
+RESULT: FAIL  cached_ok=True, uncached=502(0.7s), jobs=502(0.3s), recovered=True

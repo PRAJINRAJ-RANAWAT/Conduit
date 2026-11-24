@@ -1,0 +1,51 @@
+{
+ "test1_50_simultaneous_limit_10": [
+  {
+   "passed": 10,
+   "rejected_429": 40,
+   "other": 0
+  },
+  {
+   "passed": 10,
+   "rejected_429": 40,
+   "other": 0
+  },
+  {
+   "passed": 10,
+   "rejected_429": 40,
+   "other": 0
+  }
+ ],
+ "test2_token_accuracy": [
+  {
+   "tokens_per_minute": 6000,
+   "clients": 100,
+   "elapsed_s": 31.0,
+   "responses_200": 696,
+   "responses_429": 4509,
+   "admitted_tokens": 9048,
+   "theoretical_max_tokens": 9098,
+   "over_admission_pct": -0.55
+  },
+  {
+   "tokens_per_minute": 6000,
+   "clients": 100,
+   "elapsed_s": 30.4,
+   "responses_200": 691,
+   "responses_429": 5060,
+   "admitted_tokens": 8983,
+   "theoretical_max_tokens": 9039,
+   "over_admission_pct": -0.62
+  },
+  {
+   "tokens_per_minute": 6000,
+   "clients": 100,
+   "elapsed_s": 30.3,
+   "responses_200": 690,
+   "responses_429": 7332,
+   "admitted_tokens": 8970,
+   "theoretical_max_tokens": 9026,
+   "over_admission_pct": -0.62
+  }
+ ]
+}

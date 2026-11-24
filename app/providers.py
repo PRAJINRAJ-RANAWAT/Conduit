@@ -4,10 +4,16 @@ Each provider has a CIRCUIT BREAKER, like a fuse:
   CLOSED    normal. Count failures in a row.
   OPEN      after 3 failures in a row: stop calling it for COOLDOWN seconds (fail fast).
   HALF-OPEN after the cooldown: let ONE probe call through. Success -> CLOSED, failure -> OPEN again.
-State lives inside each gateway process (simple; each replica learns on its own).
+
+The state lives in REDIS, so every gateway replica agrees: if replica 1 sees A failing, replica 2
+stops calling A too. Keys (per provider NAME):
+  cb:NAME:fails    failures in a row (expires after 60s without a new failure)
+  cb:NAME:tripped  exists = the breaker has tripped and is not yet proven healthy again
+  cb:NAME:open     exists = still inside the cooldown (expires by itself = cooldown over)
+  cb:NAME:probe    exists = one replica is already running the half-open probe (SET NX = only one wins)
 """
 import os
-import time
+
 import httpx
 
 COOLDOWN = float(os.getenv("BREAKER_COOLDOWN", "10"))
@@ -15,31 +21,33 @@ THRESHOLD = 3
 
 
 class Breaker:
-    def __init__(self):
-        self.fails, self.opened_at, self.probing = 0, None, False
+    def __init__(self, r, name: str):
+        self.r, self.k = r, lambda part: f"cb:{name}:{part}"
 
-    def allow(self) -> bool:
-        if self.opened_at is None:
-            return True
-        if time.time() - self.opened_at >= COOLDOWN and not self.probing:
-            self.probing = True            # half-open: exactly one probe at a time
-            return True
-        return False
+    async def allow(self) -> bool:
+        if not await self.r.exists(self.k("tripped")):
+            return True                                   # closed
+        if await self.r.exists(self.k("open")):
+            return False                                  # open: inside the cooldown
+        # half-open: exactly one probe at a time, across ALL replicas
+        return bool(await self.r.set(self.k("probe"), 1, nx=True, px=5000))
 
-    def success(self):
-        self.fails, self.opened_at, self.probing = 0, None, False
+    async def success(self):
+        await self.r.delete(*[self.k(p) for p in ("fails", "tripped", "open", "probe")])
 
-    def failure(self):
-        self.fails += 1
-        self.probing = False
-        if self.fails >= THRESHOLD:
-            self.opened_at = time.time()   # (re)open
+    async def failure(self):
+        fails = await self.r.incr(self.k("fails"))
+        await self.r.expire(self.k("fails"), 60)
+        await self.r.delete(self.k("probe"))
+        # trip after THRESHOLD failures in a row, or re-open at once if a half-open probe failed
+        if fails >= THRESHOLD or await self.r.exists(self.k("tripped")):
+            await self.r.set(self.k("tripped"), 1)
+            await self.r.set(self.k("open"), 1, px=int(COOLDOWN * 1000))
 
-    @property
-    def state(self) -> str:
-        if self.opened_at is None:
+    async def state(self) -> str:
+        if not await self.r.exists(self.k("tripped")):
             return "closed"
-        return "half-open" if time.time() - self.opened_at >= COOLDOWN else "open"
+        return "open" if await self.r.exists(self.k("open")) else "half-open"
 
 
 def urls() -> dict:
@@ -47,7 +55,6 @@ def urls() -> dict:
             "B": os.getenv("PROVIDER_B_URL", "http://localhost:9001")}
 
 
-breakers = {"A": Breaker(), "B": Breaker()}
 client = httpx.AsyncClient(timeout=5)   # shared connection pool
 
 
@@ -55,16 +62,21 @@ class AllProvidersDown(Exception):
     pass
 
 
-async def call(body: dict):
+async def states(r) -> dict:
+    return {name: await Breaker(r, name).state() for name in urls()}
+
+
+async def call(body: dict, r):
     """Returns (result_json, provider_name). Tries A, then B."""
     for name, url in urls().items():
-        if not breakers[name].allow():
+        breaker = Breaker(r, name)
+        if not await breaker.allow():
             continue
         try:
             resp = await client.post(f"{url}/v1/chat/completions", json=body)
             resp.raise_for_status()
-            breakers[name].success()
+            await breaker.success()
             return resp.json(), name
         except httpx.HTTPError:
-            breakers[name].failure()
+            await breaker.failure()
     raise AllProvidersDown()

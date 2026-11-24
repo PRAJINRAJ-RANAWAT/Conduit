@@ -58,5 +58,5 @@ export function limited() {
 }
 
 export function handleSummary(data) {
-  return { '/bench/results/summary.json': JSON.stringify(data, null, 1) };
+  return { [`/bench/results/${__ENV.LABEL}/summary.json`]: JSON.stringify(data, null, 1) };
 }
