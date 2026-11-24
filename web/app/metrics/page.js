@@ -27,6 +27,12 @@ export default function Metrics() {
         <Card label="429 responses" value={s.rate_limited || 0} />
         <Card label="queue depth" value={s.queue_depth} sub="jobs waiting in RabbitMQ" />
         <Card label="DLQ size" value={s.dlq_size} sub="dead jobs" />
+        <Card label="jobs in flight" value={s.inflight} sub="dispatched + running + retrying" />
+        <Card label="queued per tenant" value={Object.values(s.queued_by_tenant).reduce((a, b) => a + b, 0)}
+              sub={Object.entries(s.queued_by_tenant).map(([k, v]) => `${k}:${v}`).join(" ") || "none waiting"} />
+        <Card label="time to start (p95, last 5 min)" value={s.time_to_start_ms_last_5min.p95 == null ? "-" : `${Math.round(s.time_to_start_ms_last_5min.p95)} ms`}
+              sub={`p50 ${s.time_to_start_ms_last_5min.p50 == null ? "-" : Math.round(s.time_to_start_ms_last_5min.p50)} ms · ${s.time_to_start_ms_last_5min.n} jobs`} />
+        <Card label="active dispatcher" value={s.dispatcher_leader ? s.dispatcher_leader.slice(0, 8) : "none"} sub="holds the Postgres advisory lock" />
         <Card label="provider A circuit" value={s.circuits.A} />
         <Card label="provider B circuit" value={s.circuits.B} />
         <Card label="jobs by status" value={Object.values(s.jobs).reduce((a, b) => a + b, 0)} sub={Object.entries(s.jobs).map(([k, v]) => `${k}:${v}`).join(" ")} />

@@ -1,7 +1,7 @@
 rabbitmq stopped
 chat while rabbitmq is down: HTTP 200
-job submit while rabbitmq is down: HTTP 503
+job submits while rabbitmq is down: [202, 202, 202, 202, 202]
+job states while down: ['QUEUED']
 rabbitmq started; waiting for it to be healthy
-retry with the same key: HTTP 200
-final: [('SUCCEEDED', 1), ('SUCCEEDED', 1)]
-RESULT: PASS  503_while_down=True, finished_after_recovery=True
+final: [('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1)]
+RESULT: PASS  202_while_down=True, all_finished_without_client_retry=True, max_attempts=1
