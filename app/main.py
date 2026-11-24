@@ -2,14 +2,16 @@
 
 Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle real usage
 """
+import asyncio
 import os
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 
 import time
-from app import auth, cache, db, jobs_api, prompts_api, providers, stats
+from app import auth, cache, db, jobs_api, mq, prompts_api, providers, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
 
@@ -24,6 +26,11 @@ async def lifespan(_):
 
 
 app = FastAPI(lifespan=lifespan)
+# Lets the web UI (a different origin) call the API from the browser, and read our X-* headers.
+app.add_middleware(
+    CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3100").split(","),
+    allow_methods=["*"], allow_headers=["*"],
+    expose_headers=["X-Conduit-Cache", "X-Conduit-Provider", "X-RateLimit-Remaining-Tokens", "Retry-After"])
 
 
 @app.exception_handler(redis.RedisError)
@@ -94,3 +101,15 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
         return result
     finally:
         await limiter.release_slot(name, slot)
+
+
+@app.get("/stats")
+async def get_stats():
+    """Real counters for the UI Metrics page (Redis counters + live queue sizes + job counts)."""
+    counts = await stats.all_counts(r)
+    queue = await asyncio.to_thread(mq.publisher.depth, mq.WORK)   # pika is blocking -> thread
+    dlq = await asyncio.to_thread(mq.publisher.depth, mq.DLQ)
+    jobs = await asyncio.to_thread(db.run, "SELECT status, count(*) AS n FROM jobs GROUP BY status")
+    return {**counts, "queue_depth": queue, "dlq_size": dlq,
+            "jobs": {j["status"]: j["n"] for j in jobs},
+            "circuits": {n: b.state for n, b in providers.breakers.items()}}

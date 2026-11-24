@@ -7,7 +7,7 @@ x-app: &app            # settings shared by every Python service
     RABBIT_URL: amqp://guest:guest@rabbitmq:5672/%2F
     PROVIDER_A_URL: http://mock-a:9000
     PROVIDER_B_URL: http://mock-b:9000
-    CORS_ORIGINS: http://localhost:3000
+    CORS_ORIGINS: http://localhost:3100
   depends_on:
     redis: {condition: service_healthy}
     rabbitmq: {condition: service_healthy}
@@ -41,3 +41,8 @@ services:
   worker:
     <<: *app
     command: python -m app.worker
+  web:                         # the Next.js UI on http://localhost:3100
+    build: ./web
+    ports: ["3100:3000"]
+    volumes: ["./bench/results:/data/bench:ro"]   # the landing page reads real benchmark numbers from here
+    depends_on: [gateway]

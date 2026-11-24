@@ -49,3 +49,12 @@ lines += ["",
           "Raw data: `raw.json.gz` (every k6 data point), `summary.json` (k6 summary)."]
 (out / "REPORT.md").write_text("\n".join(lines) + "\n")
 print("\n".join(lines))
+
+# Small file the web UI landing page reads, so its numbers are never typed by hand.
+cap = "http_req_duration{scenario:capacity}"
+(out / "stats.json").write_text(json.dumps({
+    "capacity_p99_ms": round(v(cap, "p(99)"), 1),
+    "capacity_rps": round(v("http_reqs{scenario:capacity}", "count") / test_secs),
+    "jobs_submitted": submitted,
+    "jobs_lost": submitted - sum(jobs.get(s, 0) for s in ("SUCCEEDED", "DEAD")),
+}, indent=1))
