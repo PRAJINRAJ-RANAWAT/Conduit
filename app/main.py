@@ -1,52 +1,76 @@
 """Conduit gateway: every LLM call goes through here.
 
-Request flow:  API key -> rate limit -> cache -> LLM provider -> save to cache
+Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle real usage
 """
 import os
 import httpx
 import redis.asyncio as redis
 from fastapi import FastAPI, Header, HTTPException, Response
 
-from app import cache, limiter
+from app import cache, stats
+from app.limiter import Limiter
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 PROVIDER_URL = os.getenv("PROVIDER_URL", "http://localhost:9000")
 
-# Phase 1 keeps tenants in a dict. A Postgres table replaces this later.
+# Kept in a dict until step 4 moves tenants into Postgres.
+# tpm = LLM tokens per minute, conc = max calls running at once.
 TENANTS = {
-    "key-alice": {"name": "alice", "rpm": 60},
-    "key-bob": {"name": "bob", "rpm": 5},
+    "key-alice": {"name": "alice", "tpm": 60_000, "conc": 20},
+    "key-bob": {"name": "bob", "tpm": 300, "conc": 2},
 }
 
 app = FastAPI()
 r = redis.from_url(REDIS_URL, decode_responses=True)
+limiter = Limiter(r)
+
+
+def estimate_tokens(body: dict) -> int:
+    """Guess the cost BEFORE calling: ~4 characters per input token + the max reply size."""
+    chars = sum(len(m["content"]) for m in body["messages"])
+    return chars // 4 + 1 + body.get("max_tokens", 50)
+
+
+def reject(why: str, retry_after: int):
+    return HTTPException(429, why, headers={"Retry-After": str(max(retry_after, 1))})
 
 
 @app.post("/v1/chat/completions")
 async def chat(body: dict, response: Response, authorization: str = Header(default="")):
-    # 1. Who are you?
     tenant = TENANTS.get(authorization.removeprefix("Bearer "))
     if not tenant:
         raise HTTPException(401, "bad api key")
+    name, tpm = tenant["name"], tenant["tpm"]
+    await stats.incr(r, "requests")
 
-    # 2. Are you allowed to call right now?
-    if not await limiter.allow(r, tenant["name"], tenant["rpm"]):
-        raise HTTPException(429, "rate limit exceeded", headers={"Retry-After": "60"})
+    slot = await limiter.acquire_slot(name, tenant["conc"])
+    if not slot:
+        await stats.incr(r, "rate_limited")
+        raise reject("too many concurrent requests", 1)
+    try:
+        cost = estimate_tokens(body)
+        ok, left, retry = await limiter.reserve(name, tpm, cost)
+        if not ok:
+            await stats.incr(r, "rate_limited")
+            raise reject("token limit exceeded", retry)
 
-    # 3. Have we answered this before?
-    key = cache.make_key(tenant["name"], body)
-    cached = await cache.get(r, key)
-    if cached:
-        response.headers["X-Conduit-Cache"] = "hit"
-        return cached
-
-    # 4. Ask the LLM
-    async with httpx.AsyncClient(timeout=30) as client:
-        upstream = await client.post(f"{PROVIDER_URL}/v1/chat/completions", json=body)
-    upstream.raise_for_status()
-    result = upstream.json()
-
-    # 5. Remember it
-    await cache.put(r, key, result)
-    response.headers["X-Conduit-Cache"] = "miss"
-    return result
+        key = cache.make_key(name, body)
+        result = await cache.get(r, key)
+        if result:                                   # cache hit costs nothing: full refund
+            left = await limiter.settle(name, tpm, cost, 0)
+            await stats.incr(r, "cache_hit")
+            response.headers["X-Conduit-Cache"] = "hit"
+        else:
+            async with httpx.AsyncClient(timeout=30) as client:
+                up = await client.post(f"{PROVIDER_URL}/v1/chat/completions", json=body)
+            up.raise_for_status()
+            result = up.json()
+            used = result["usage"]["prompt_tokens"] + result["usage"]["completion_tokens"]
+            left = await limiter.settle(name, tpm, cost, used)  # refund or charge the gap
+            await cache.put(r, key, result)
+            await stats.incr(r, "cache_miss")
+            response.headers["X-Conduit-Cache"] = "miss"
+        response.headers["X-RateLimit-Remaining-Tokens"] = str(left)
+        return result
+    finally:
+        await limiter.release_slot(name, slot)

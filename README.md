@@ -8,8 +8,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 docker compose up -d redis
 uvicorn app.mock_provider:app --port 9000 &     # fake LLM
-uvicorn app.main:app --port 8000                # gateway
-curl -s localhost:8000/v1/chat/completions -H "Authorization: Bearer key-alice" \
+uvicorn app.main:app --port 8080                # gateway
+curl -s localhost:8080/v1/chat/completions -H "Authorization: Bearer key-alice" \
   -H "Content-Type: application/json" -d '{"messages":[{"role":"user","content":"hi"}]}'
 pytest
 ```
@@ -18,7 +18,7 @@ pytest
 | File | What it does |
 |---|---|
 | `app/main.py` | The gateway, with the whole request flow in one function |
-| `app/limiter.py` | Redis rate limiter |
+| `app/limiter.py` | Redis token bucket + concurrency cap (Lua) |
 | `app/cache.py` | Redis cache |
 | `app/mock_provider.py` | Fake LLM for testing |
 

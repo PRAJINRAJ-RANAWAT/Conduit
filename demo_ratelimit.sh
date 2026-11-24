@@ -1,8 +1,9 @@
 #!/bin/bash
-# Fires 8 requests as "bob" (limit 5/min). Expect five 200s then 429s.
-# Needs: docker compose up -d, gateway on :8000 (see README).
-for i in 1 2 3 4 5 6 7 8; do
-  curl -s -o /dev/null -w "request $i -> HTTP %{http_code}\n" localhost:8000/v1/chat/completions \
+# Shows the token limiter. "bob" has 300 tokens/min; each call below costs ~100.
+# Expect: several 200s (tokens left shrinking) then 429 with a Retry-After header.
+for i in 1 2 3 4 5; do
+  curl -s -D - -o /dev/null localhost:8080/v1/chat/completions \
     -H "Authorization: Bearer key-bob" -H "Content-Type: application/json" \
-    -d "{\"messages\":[{\"role\":\"user\",\"content\":\"q$i-$RANDOM\"}]}"
+    -d "{\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"q$i-$RANDOM\"}]}" \
+    | grep -iE "^HTTP|retry-after|x-ratelimit|x-conduit" | tr -d '\r' | paste -sd' ' -
 done

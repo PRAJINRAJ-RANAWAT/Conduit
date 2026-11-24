@@ -36,19 +36,12 @@ async def test_second_identical_call_is_cached(client):
     assert second.headers["X-Conduit-Cache"] == "hit"
 
 
-async def test_concurrent_requests_exactly_limit_pass(client):
-    """50 simultaneous requests, limit 10 -> exactly 10 get through (Redis INCR is atomic)."""
-    import asyncio
-    main.TENANTS["key-burst"] = {"name": "burst", "rpm": 10}
-    h = {"Authorization": "Bearer key-burst"}
-    # distinct prompts so the cache can't answer any of them
-    calls = [client.post("/v1/chat/completions", headers=h,
-             json={"messages": [{"role": "user", "content": f"q{i}"}]}) for i in range(50)]
-    codes = [r.status_code for r in await asyncio.gather(*calls)]
-    assert codes.count(200) == 10 and codes.count(429) == 40
-
-
-async def test_rate_limit(client):
-    h = {"Authorization": "Bearer key-bob"}  # bob: 5 per minute
-    codes = [(await client.post("/v1/chat/completions", json=BODY, headers=h)).status_code for _ in range(7)]
-    assert codes == [200] * 5 + [429] * 2
+async def test_token_limit_returns_429_with_headers(client):
+    h = {"Authorization": "Bearer key-bob"}  # bob: 300 tokens/min
+    big = {"messages": [{"role": "user", "content": "x" * 400}], "max_tokens": 100}  # ~201 each
+    first = await client.post("/v1/chat/completions", json=big, headers=h)
+    assert first.status_code == 200 and "X-RateLimit-Remaining-Tokens" in first.headers
+    # first call refunded the unused part, so use fresh text to bypass the cache
+    big2 = {"messages": [{"role": "user", "content": "y" * 400}], "max_tokens": 400}  # ~501 > 300
+    second = await client.post("/v1/chat/completions", json=big2, headers=h)
+    assert second.status_code == 429 and int(second.headers["Retry-After"]) >= 1
