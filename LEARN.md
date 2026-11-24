@@ -29,14 +29,14 @@ Read the code in this order. Each file is short on purpose.
 
 **Questions:** "Cache invalidation?" "Cache stampede?" "What is safe to cache for an LLM?"
 
-## 4. Job queue (`app/jobs_api.py`, `app/mq.py`, `app/worker.py`)
-1. The API saves the job in Postgres *first*, then publishes. Postgres is the source of truth; RabbitMQ only moves messages.
+## 4. Job queue (`app/jobs_api.py`, `app/dispatcher.py`, `app/mq.py`, `app/worker.py`)
+1. The API only saves the job in Postgres (`QUEUED`) and answers 202. Postgres is the source of truth; RabbitMQ only moves messages, so a broker outage never loses or rejects a job.
 2. `Idempotency-Key` + a unique constraint means a retried POST never creates a duplicate.
-3. Publisher confirms: the broker says "it's on disk" before we answer 202.
-4. The worker acks *after* saving the result; a crash means redelivery, and a conditional `UPDATE` makes duplicates harmless (at-least-once delivery + idempotent processing = effectively once).
+3. The dispatcher publishes with publisher confirms ("it's on disk") and marks the job `DISPATCHED`; the worker acks only *after* saving the result.
+4. Each message carries the job's `dispatch_seq`. A conditional `UPDATE ... WHERE dispatch_seq = <msg's>` means stale or duplicate messages are ignored (at-least-once delivery + idempotent processing = effectively once).
 5. Retries use TTL queues that dead-letter back to the work queue (5s, 30s); the third failure goes to the DLQ.
 
-**Questions:** "Exactly-once delivery?" "How do you avoid duplicate processing?" "Why a DB and a broker?" "What is a dead-letter queue?" "RabbitMQ vs Kafka?"
+**Questions:** "Exactly-once delivery?" "How do you avoid duplicate processing?" "Why a DB and a broker?" "What is a dead-letter queue?" "RabbitMQ vs Kafka?" "What is a fencing token?" (`dispatch_seq`)
 
 ## 5. Prompt optimisation (`app/optimiser.py`, `app/prompts_api.py`)
 1. Prompt versions are immutable (a DB trigger refuses edits), so results are reproducible and rollbacks are trivial.
@@ -88,3 +88,12 @@ Read the code in this order. Each file is short on purpose.
 4. CI runs the same tests against real Redis/RabbitMQ/Postgres service containers, so "works on my laptop" is checked.
 
 **Questions:** "How do you scale a stateful-looking service horizontally?" "What breaks when you add a second replica?" "How do you measure a rate limiter's accuracy?"
+
+## 11. Fair scheduling (step 3: `app/dispatcher.py`, `app/drr.py`)
+1. Problem: with one shared FIFO queue a tenant that submits 10x more jobs makes everyone else wait behind its backlog (measured: p99 26 s for the victim).
+2. Deficit Round Robin: walk a ring of tenants; each visit gives a tenant `weight` credits, one credit = one job. A big queue cannot take more than its share. The pointer stays on a tenant if the slots ran out mid-visit.
+3. Backpressure: the dispatcher never lets more than `MAX_INFLIGHT` jobs be out in RabbitMQ/workers. The rest wait in Postgres, so the broker queue (a plain FIFO) stays short. Measured trade-off: 6 in flight -> victim p99 0.4 s, 50 in flight -> 4.4 s.
+4. Leader election with a Postgres advisory lock: whoever holds the lock dispatches; if it dies its connection closes, the lock is released, and the standby takes over (0.31 s in our kill test). `SKIP LOCKED` + fenced claims keep even a brief double-leader harmless.
+5. The reconciler repairs lost work: expired leases (dead worker) and `DISPATCHED` jobs whose message vanished go back to `QUEUED`. Interactive traffic beats batch for the shared provider budget because batch may only use a fraction of the slots.
+
+**Questions:** "How do you stop one tenant from starving others?" "What is DRR?" "How do you do leader election without ZooKeeper?" "What is backpressure and where does it live in your design?" "What happens to in-flight work when the leader dies?"

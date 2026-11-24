@@ -1,0 +1,5 @@
+killed dispatcher af5f8e0e1177 at {'DISPATCHED': 50, 'QUEUED': 991, 'SUCCEEDED': 1038}
+submitted 5000 jobs in 14s (HTTP codes: [202])
+standby 5a4dde8b4a03 became leader 0.31s after af5f8e0e1177 was killed
+final counts: {'SUCCEEDED': 5000}; attempts: max=1 total=5000 for 5000 jobs
+RESULT: PASS  takeover=0.31s, succeeded=5000/5000, lost=0, duplicate_executions=0

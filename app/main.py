@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import auth, cache, db, jobs_api, mq, prompts_api, providers, stats
+from app import auth, dispatcher, cache, db, jobs_api, mq, provider_budget, prompts_api, providers, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
 
@@ -115,11 +115,17 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
             response.headers["X-Conduit-Cache"] = "hit"
             provider = "cache"
         else:
+            pslot = await limiter.acquire_slot("provider", provider_budget.limit_for("interactive"))
+            if not pslot:
+                await limiter.settle(name, tpm, cost, 0)
+                raise HTTPException(503, "provider budget exhausted", headers={"Retry-After": "1"})
             try:
                 result, provider = await providers.call(body, r)
             except providers.AllProvidersDown:
                 await limiter.settle(name, tpm, cost, 0)       # nothing was used: refund
                 raise HTTPException(503, "all providers are down", headers={"Retry-After": "10"})
+            finally:
+                await limiter.release_slot("provider", pslot)
             used = result["usage"]["prompt_tokens"] + result["usage"]["completion_tokens"]
             left = await limiter.settle(name, tpm, cost, used)  # refund or charge the gap
             await cache.put(r, key, result)
@@ -135,6 +141,23 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
         await limiter.release_slot(name, slot)
 
 
+def scheduler_stats() -> dict:
+    """Fair-scheduling metrics: queued per tenant, in flight, time-to-start, and which dispatcher leads."""
+    queued = db.run("SELECT tenant, count(*) AS n FROM jobs WHERE status='QUEUED' GROUP BY tenant")
+    inflight = db.run("SELECT count(*) AS n FROM jobs WHERE status IN ('DISPATCHED','RUNNING','RETRYING')")[0]["n"]
+    tts = db.run("""SELECT count(*) AS n,
+                    percentile_cont(0.5)  WITHIN GROUP (ORDER BY ms) AS p50,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY ms) AS p95,
+                    percentile_cont(0.99) WITHIN GROUP (ORDER BY ms) AS p99
+                    FROM (SELECT extract(epoch FROM started_at - created_at) * 1000 AS ms FROM jobs
+                          WHERE started_at > now() - interval '5 minutes') t""")[0]
+    leader = db.run("""SELECT a.application_name AS host FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+                       WHERE l.locktype = 'advisory' AND l.objid = %s AND l.granted""", (dispatcher.LOCK_KEY,))
+    return {"queued_by_tenant": {q["tenant"]: q["n"] for q in queued}, "inflight": inflight,
+            "time_to_start_ms_last_5min": {k: (round(float(v), 1) if v is not None else None) for k, v in tts.items()},
+            "dispatcher_leader": leader[0]["host"] if leader else None}
+
+
 @app.get("/stats")
 async def get_stats():
     """Real counters for the UI Metrics page (Redis counters + live queue sizes + job counts)."""
@@ -142,6 +165,7 @@ async def get_stats():
     queue = await asyncio.to_thread(mq.publisher.depth, mq.WORK)   # pika is blocking -> thread
     dlq = await asyncio.to_thread(mq.publisher.depth, mq.DLQ)
     jobs = await asyncio.to_thread(db.run, "SELECT status, count(*) AS n FROM jobs GROUP BY status")
-    return {**counts, "queue_depth": queue, "dlq_size": dlq,
+    sched = await asyncio.to_thread(scheduler_stats)
+    return {**counts, "queue_depth": queue, "dlq_size": dlq, **sched,
             "jobs": {j["status"]: j["n"] for j in jobs},
             "circuits": await providers.states(r)}

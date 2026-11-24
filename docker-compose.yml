@@ -8,6 +8,9 @@ x-app: &app            # settings shared by every Python service
     PROVIDER_A_URL: http://mock-a:9000
     PROVIDER_B_URL: http://mock-b:9000
     CORS_ORIGINS: http://localhost:3100
+    DISPATCH_MODE: ${DISPATCH_MODE:-fair}       # fair = Deficit Round Robin, fifo = oldest first (experiment baseline)
+    MAX_INFLIGHT: ${MAX_INFLIGHT:-50}           # most jobs allowed out in RabbitMQ/workers at once
+    PROVIDER_SLOTS: ${PROVIDER_SLOTS:-400}      # shared concurrent provider calls (interactive first, batch gets the residual)
   depends_on:
     redis: {condition: service_healthy}
     rabbitmq: {condition: service_healthy}
@@ -30,10 +33,12 @@ services:
   mock-a:                      # fake LLM provider A (port 9000 on your machine)
     build: .
     command: uvicorn app.mock_provider:app --host 0.0.0.0 --port 9000
+    environment: {MOCK_LATENCY: "${MOCK_LATENCY:-0.2}"}
     ports: ["9000:9000"]
   mock-b:                      # fake LLM provider B
     build: .
     command: uvicorn app.mock_provider:app --host 0.0.0.0 --port 9000
+    environment: {MOCK_LATENCY: "${MOCK_LATENCY:-0.2}"}
     ports: ["9001:9000"]
   gateway-1:                   # two identical gateway replicas...
     <<: *app
@@ -49,6 +54,11 @@ services:
     command: python -m app.worker
     deploy:
       replicas: ${WORKERS:-3}              # 3 worker replicas (WORKERS=1 for the single-worker benchmark)
+  dispatcher:                  # 2 replicas, only the leader (Postgres advisory lock) is active
+    <<: *app
+    command: python -m app.dispatcher
+    deploy:
+      replicas: 2
   web:                         # the Next.js UI on http://localhost:3100
     build: ./web
     ports: ["3100:3000"]

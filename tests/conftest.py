@@ -35,3 +35,8 @@ def mock_llm():
     yield
     for p in procs:
         p.kill()
+
+
+def start(module: str, **env):
+    """Start `python -m <module>` as a real process with extra environment variables."""
+    return subprocess.Popen([sys.executable, "-m", module], env={**os.environ, **{k: str(v) for k, v in env.items()}})

@@ -8,6 +8,7 @@ nothing about real model quality.
 """
 import asyncio
 import hashlib
+import os
 
 from fastapi import FastAPI, HTTPException
 
@@ -49,7 +50,7 @@ async def chat(body: dict):
         reply = eval_reply(body)
         completion = 1
     else:
-        await asyncio.sleep(0.2)  # pretend the model is thinking
+        await asyncio.sleep(float(os.getenv("MOCK_LATENCY", "0.2")))  # pretend the model is thinking
         reply = f"echo: {last} " + "word " * (body.get("max_tokens", 50) // 2)  # length follows max_tokens
         completion = len(reply.split())
     return {
