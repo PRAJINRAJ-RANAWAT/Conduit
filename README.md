@@ -1,52 +1,58 @@
 # Conduit
 
-A gateway that sits between apps and LLMs. It checks the API key, rate-limits, caches, then calls the model.
+A gateway between your apps and LLMs. It checks the API key, rate-limits by tokens, caches, calls a healthy
+provider, and runs bulk work through a queue. Everything runs locally against a mock LLM (no money spent).
 
-## Run it
+## Run everything (one command)
 ```
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-docker compose up -d redis
-uvicorn app.mock_provider:app --port 9000 &     # fake LLM
-uvicorn app.main:app --port 8080                # gateway
-curl -s localhost:8080/v1/chat/completions -H "Authorization: Bearer key-alice" \
-  -H "Content-Type: application/json" -d '{"messages":[{"role":"user","content":"hi"}]}'
-pytest
+docker compose up -d --build
 ```
+| What | Where |
+|---|---|
+| UI | http://localhost:3100 |
+| Gateway API | http://localhost:8080 |
+| Mock LLM A / B | :9000 / :9001 |
+| RabbitMQ console | http://localhost:15672 (guest/guest) |
+
+Demo keys: `key-alice` (60k tokens/min), `key-bob` (300 tokens/min), `key-load` (benchmarks).
+(Ports 3100/8080 are used because 3000/8000 were taken on the author's machine.)
+
+## Demos, tests, benchmarks
+| Command | Shows |
+|---|---|
+| `./demo_ratelimit.sh` | token bucket: 200s, then 429 + Retry-After |
+| `./demo_queue.sh` | jobs, retries, DLQ, idempotency (takes ~50s) |
+| `./demo_prompts.sh` | prompt optimiser report |
+| `./demo_failover.sh` | provider A fails, B takes over, A recovers |
+| `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pytest` | 25 tests on real Redis/RabbitMQ/Postgres |
+| `./bench/run.sh` | k6 load test -> `bench/results/REPORT.md` |
+| `./chaos/run_all.sh` | 4 failure scenarios -> `chaos/RESULTS.md` |
+| `cd web && npm i && node tests/smoke.mjs` | UI smoke test + screenshots in `docs/screenshots/` |
+| `./run_all.sh` | all of the above from a clean start -> `FINAL_RUN.log` |
 
 ## Files
 | File | What it does |
 |---|---|
-| `app/main.py` | The gateway, with the whole request flow in one function |
-| `app/limiter.py` | Redis token bucket + concurrency cap (Lua) |
-| `app/cache.py` | Redis cache |
-| `app/mock_provider.py` | Fake LLM for testing |
+| `app/main.py` | gateway: the whole request flow in one function, `/stats`, CORS |
+| `app/limiter.py` | Redis Lua token bucket + concurrency cap |
+| `app/cache.py` | Redis response cache |
+| `app/providers.py` | provider fallback + circuit breaker |
+| `app/auth.py`, `app/db.py`, `app/schema.sql` | Postgres tenants, hashed keys, usage |
+| `app/jobs_api.py`, `app/mq.py`, `app/worker.py` | job queue |
+| `app/optimiser.py`, `app/prompts_api.py`, `app/golden.json` | prompt optimisation |
+| `app/mock_provider.py` | fake LLM (can fail on demand; deterministic eval mode) |
+| `web/` | Next.js UI (5 pages) |
 
-## Roadmap (one small step at a time)
-1. Gateway + limiter + cache  <- done
-2. Postgres for tenants/keys/usage
-3. Batch jobs via a queue (RabbitMQ) + workers
-4. Provider fallback
-5. Load tests with k6, then write up the numbers
+Learning notes: `LEARN.md`. Resume bullets: `RESUME.md`.
 
-## Job queue (step 2)
-`POST /jobs` (needs `Idempotency-Key`) saves the job in Postgres and publishes it to RabbitMQ.
-A worker (`python -m app.worker`) runs it, saves the result, then acks. Failures retry after
-5s / 30s via TTL delay queues; the 3rd failure puts the job in the DLQ. `./demo_queue.sh` shows it.
-Ports: gateway 8080, mock LLM 9000 (8000 on this machine was taken by another program).
+## Measured results
+All numbers live in saved files, none are typed here: `bench/results/REPORT.md` (k6), `chaos/RESULTS.md`,
+`FINAL_RUN.log` (last full run). Quality scores in the optimiser come from a deterministic *simulator* and its
+prices are ASSUMED.
 
-## Prompt optimisation (step 3)
-Prompt versions are immutable (a Postgres trigger refuses edits). `POST /prompts/optimise` scores every
-version on a 20-example golden set and picks the fewest-token version within `epsilon` of the baseline.
-Quality comes from a deterministic *simulator* in the mock LLM, and prices are ASSUMED, so the
-"% saved" shows the pipeline works, not real-model savings. `./demo_prompts.sh` prints the report.
-
-## Postgres + failover (step 4)
-Tenants, hashed API keys and usage rows live in Postgres (`app/schema.sql`). The gateway tries
-provider A, then B; a circuit breaker (3 failures -> open 10s -> half-open probe) stops hammering a dead
-provider. If both are down: fast 503 with `Retry-After`. `./demo_failover.sh` shows it.
-Note: breaker state is per gateway process, and a revoked key can take up to 30s to be noticed (auth cache).
-
-## Load test (step 5)
-`./bench/run.sh` runs k6 (in Docker) against the whole stack and writes `bench/results/REPORT.md`
-(raw data and summary alongside). Latest measured numbers are in that file, nothing here is hand-typed.
+## Known limits
+- One laptop; k6 shares the CPU with the stack. One gateway process, one worker.
+- Under the k6 load, one worker took ~3 minutes after the load ended to finish 1,101 jobs (it is slower than the submit rate). Add workers to go faster.
+- Circuit-breaker state is per gateway process; a revoked key can be accepted for up to 30s (auth cache).
+- Redis down = chat refuses (fail closed), by design. Postgres-down was not tested.
+- Not pushed to GitHub; the UI "GitHub" button points to `#` until `NEXT_PUBLIC_GITHUB_URL` is set.

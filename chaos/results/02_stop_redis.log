@@ -1,6 +1,6 @@
 baseline chat: 200
 redis stopped
-chat while redis is down: HTTP 503 after 0.04s
+chat while redis is down: HTTP 503 after 0.02s
 job submit while redis is down: HTTP 202
 redis started
 chat works again: True

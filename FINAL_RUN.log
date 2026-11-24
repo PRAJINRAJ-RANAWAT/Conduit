@@ -1,0 +1,167 @@
+
+################ clean start
+ Network conduit_default Removed 
+ Container conduit-worker-1 Started 
+ Container conduit-web-1 Started 
+
+################ pytest
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+25 passed, 1 warning in 16.08s
+
+################ demo_ratelimit.sh
+HTTP/1.1 200 OK x-conduit-cache: miss x-ratelimit-remaining-tokens: 247 x-conduit-provider: A
+HTTP/1.1 200 OK x-conduit-cache: miss x-ratelimit-remaining-tokens: 195 x-conduit-provider: A
+HTTP/1.1 200 OK x-conduit-cache: miss x-ratelimit-remaining-tokens: 143 x-conduit-provider: A
+HTTP/1.1 200 OK x-conduit-cache: miss x-ratelimit-remaining-tokens: 91 x-conduit-provider: A
+HTTP/1.1 429 Too Many Requests retry-after: 2
+
+################ demo_prompts.sh
+version  score  avg_input_tokens  cost/1k calls (ASSUMED prices)
+  v1     1.00    42.2             $0.0226 <- baseline
+  v2     0.85    32.2             $0.0176
+  v3     0.95    27.2             $0.0151
+  v4     0.95    21.2             $0.0121 <- BEST
+  v5     0.20     7.2             $0.0051
+epsilon 0.10 -> picked v4, cost saved: 46.5%
+Prices are ASSUMED ($0.50/M in, $1.50/M out); tokens ~ words; quality comes from the deterministic mock eval mode, not a real model.
+
+################ demo_failover.sh
+== A healthy
+HTTP/1.1 200 OK x-conduit-provider: A
+HTTP/1.1 200 OK x-conduit-provider: A
+== A goes down
+HTTP/1.1 200 OK x-conduit-provider: B
+HTTP/1.1 200 OK x-conduit-provider: B
+HTTP/1.1 200 OK x-conduit-provider: B
+HTTP/1.1 200 OK x-conduit-provider: B
+== both down -> fast 503
+HTTP/1.1 503 Service Unavailable
+== A recovers; wait 11s for the breaker's half-open probe
+HTTP/1.1 200 OK x-conduit-provider: A
+HTTP/1.1 200 OK x-conduit-provider: A
+
+################ demo_queue.sh
+== submit
+{"id":"a476aa98-37f4-498a-a018-e5c52ea356e9","status":"QUEUED"}
+{"id":"4cdf2294-618d-473c-b473-552c3017b5ae","status":"QUEUED"}
+{"id":"a5934421-095c-4bba-a52d-088f0bbb1388","status":"QUEUED"}
+{"id":"948500e4-bc12-4879-91ea-a4deb2a28cae","status":"QUEUED"}
+== same Idempotency-Key again (expect same id, HTTP 200)
+{"id":"a476aa98-37f4-498a-a018-e5c52ea356e9","status":"RUNNING"} HTTP 200
+== status after 6s
+  948500e4 RETRYING   attempts=2
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 12s
+  948500e4 RETRYING   attempts=2
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 18s
+  948500e4 RETRYING   attempts=2
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 24s
+  948500e4 RETRYING   attempts=2
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 30s
+  948500e4 RETRYING   attempts=2
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 36s
+  948500e4 DEAD       attempts=3
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 42s
+  948500e4 DEAD       attempts=3
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== status after 48s
+  948500e4 DEAD       attempts=3
+  a5934421 SUCCEEDED  attempts=2
+  4cdf2294 SUCCEEDED  attempts=1
+  a476aa98 SUCCEEDED  attempts=1
+== DLQ (dead jobs)
+[{"id":"948500e4-bc12-4879-91ea-a4deb2a28cae","status":"DEAD","attempts":3,"error":"simulated failure on attempt 3","created_at":"2026-11-24T06:14:26.568104+00:00"}]
+
+################ bench/run.sh (k6)
+# Load test results (measured)
+
+date: 2026-11-24T06:15:15Z  
+cpu: Apple M2 (8 cores)  
+ram: 8 GB  
+docker VM memory: 4108828672  
+gateway: 1 uvicorn process, 1 worker process, mock LLM A/B (0.2s sleep), Redis/RabbitMQ/Postgres in Docker  
+
+
+| scenario | requests | req/s | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|---|
+| capacity | 14239 | 259 | 219.6 | 260.2 | 295.3 |
+| jobs | 1101 | 20 | 8.2 | 25.9 | 48.5 |
+| limited | 31530 | 573 | 3.0 | 14.6 | 28.0 |
+
+- Overall requests: 46870 in ~55s -> **852 requests/s** (all scenarios together)
+- 429 rate, capacity tenant (huge quota): 0.0%
+- 429 rate, limited tenant (bob, 300 tokens/min): 99.9%
+- Cache hit rate, capacity tenant: 30.2%
+- Unexpected HTTP errors (not 200/202/429): 0.0%
+- Jobs submitted: 1101. After the load ended, the worker needed 185s more to finish them (still pending: 0). Final status counts: {'SUCCEEDED': 1101}
+- Usage rows written: 14282
+
+Reading this: `capacity` is closed-loop (50 users wait for each answer; the mock LLM sleeps 0.2s), so its req/s is bounded by that, not by the gateway. `limited` mostly measures fast 429 rejections. 55s runs on one laptop shared with k6.
+
+Raw data: `raw.json.gz` (every k6 data point), `summary.json` (k6 summary).
+
+################ chaos/run_all.sh
+=== 01_kill_worker
+starting from a clean worker
+a job is RUNNING -> kill -9 the worker now
+states right after the kill: ['QUEUED', 'QUEUED', 'QUEUED', 'QUEUED', 'RUNNING']
+starting a fresh worker
+final: [('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 1), ('SUCCEEDED', 2)]
+RESULT: PASS  5 jobs, lost=0, retaken after crash=1
+=== 02_stop_redis
+baseline chat: 200
+redis stopped
+chat while redis is down: HTTP 503 after 0.02s
+job submit while redis is down: HTTP 202
+redis started
+chat works again: True
+RESULT: PASS  chat_down=HTTP 503, fast=True, jobs_ok=True, recovered=True
+=== 03_stop_rabbitmq
+rabbitmq stopped
+chat while rabbitmq is down: HTTP 200
+job submit while rabbitmq is down: HTTP 503
+rabbitmq started; waiting for it to be healthy
+retry with the same key: HTTP 200
+final: [('SUCCEEDED', 1), ('SUCCEEDED', 1)]
+RESULT: PASS  503_while_down=True, finished_after_recovery=True
+=== 04_provider_down
+A healthy: (200, 'A')
+A down: [(200, 'B'), (200, 'B'), (200, 'B'), (200, 'B'), (200, 'B')]
+A and B down: HTTP 503, Retry-After=10, in 0.02s
+A and B healthy again; waiting 11s for the breaker cooldown
+after recovery: [(200, 'A'), (200, 'A'), (200, 'A')]
+RESULT: PASS  failover to B, fast 503 when both down, A restored
+
+################ UI smoke test
+  landing stats: 295.3 ms | 259 req/s | 0 of 1101
+PASS landing renders
+  burst result codes: 200 200 429 200 200 200 429 200 200 200 429 200 200 200 429 200 200 200 429 200
+PASS playground burst shows 5 x 429 of 20
+PASS jobs page shows a SUCCEEDED job
+PASS prompts optimiser report renders
+PASS metrics cards render
+ALL UI SMOKE CHECKS PASSED
+
+################ UI landing after benchmark
+  landing stats: 295.3 ms | 259 req/s | 0 of 1101
