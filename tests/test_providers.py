@@ -19,8 +19,6 @@ async def client(mock_llm):
         db.init()
     auth.seed()
     await main.r.flushdb()
-    for b in providers.breakers.values():
-        b.success()
     yield AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t")
     set_fail(9100, False); set_fail(9101, False)
 
@@ -36,7 +34,7 @@ async def test_falls_back_to_B_when_A_is_down_and_breaker_opens(client):
         for i in range(4):
             r = await ask(client, i)
             assert r.status_code == 200 and r.headers["X-Conduit-Provider"] == "B"
-    assert providers.breakers["A"].state == "open"       # 3 failures in a row -> open
+    assert await providers.Breaker(main.r, "A").state() == "open"   # 3 failures in a row -> open
 
 
 async def test_breaker_recovers_through_half_open_probe(client):
@@ -44,12 +42,12 @@ async def test_breaker_recovers_through_half_open_probe(client):
     async with client:
         for i in range(3):
             await ask(client, i)
-        assert providers.breakers["A"].state == "open"
+        assert await providers.Breaker(main.r, "A").state() == "open"
         set_fail(9100, False)                             # A is healthy again
         await asyncio.sleep(1.2)                          # cooldown (1s in tests) passes
         r = await ask(client, 99)                         # the half-open probe goes to A
         assert r.headers["X-Conduit-Provider"] == "A"
-    assert providers.breakers["A"].state == "closed"
+    assert await providers.Breaker(main.r, "A").state() == "closed"
 
 
 async def test_both_down_gives_fast_503_with_retry_after(client):

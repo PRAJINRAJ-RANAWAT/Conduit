@@ -8,7 +8,8 @@ import redis.asyncio as redis
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
+import psycopg
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 
 import time
 from app import auth, cache, db, jobs_api, mq, prompts_api, providers, stats
@@ -22,7 +23,9 @@ async def lifespan(_):
     db.init()
     auth.seed()
     prompts_api.seed()
+    listener = asyncio.create_task(auth.listen_for_revocations(r))   # revoked keys, from all replicas
     yield
+    listener.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -38,6 +41,24 @@ async def redis_down(request, exc):
     """Redis holds the limiter and cache. If it is unreachable, fail fast and clearly."""
     return JSONResponse({"detail": "rate limiter unavailable"}, status_code=503,
                         headers={"Retry-After": "5"})
+
+
+
+
+@app.exception_handler(psycopg.Error)
+async def db_down(request, exc):
+    """Postgres unreachable or its pool exhausted: fail fast and clearly."""
+    return JSONResponse({"detail": "database unavailable"}, status_code=503,
+                        headers={"Retry-After": "5"})
+
+
+@app.post("/admin/keys/revoke")
+async def revoke_key(body: dict, x_admin_token: str = Header(default="")):
+    """Revoke an API key everywhere. Protected by a shared admin token (set ADMIN_TOKEN in prod)."""
+    if x_admin_token != os.getenv("ADMIN_TOKEN", "dev-admin-token"):
+        raise HTTPException(403, "bad admin token")
+    await auth.revoke(r, body["key"])
+    return {"revoked": True}
 
 
 app.include_router(jobs_api.router)
@@ -83,7 +104,7 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
             provider = "cache"
         else:
             try:
-                result, provider = await providers.call(body)
+                result, provider = await providers.call(body, r)
             except providers.AllProvidersDown:
                 await limiter.settle(name, tpm, cost, 0)       # nothing was used: refund
                 raise HTTPException(503, "all providers are down", headers={"Retry-After": "10"})
@@ -112,4 +133,4 @@ async def get_stats():
     jobs = await asyncio.to_thread(db.run, "SELECT status, count(*) AS n FROM jobs GROUP BY status")
     return {**counts, "queue_depth": queue, "dlq_size": dlq,
             "jobs": {j["status"]: j["n"] for j in jobs},
-            "circuits": {n: b.state for n, b in providers.breakers.items()}}
+            "circuits": await providers.states(r)}

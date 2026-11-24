@@ -5,7 +5,8 @@ from app import db
 
 import time
 db.init()
-out = Path(__file__).parent / "results"
+import sys
+out = Path(__file__).parent / "results" / sys.argv[1]   # one folder per run: bench/results/<label>/
 m = json.loads((out / "summary.json").read_text())["metrics"]
 
 
@@ -52,9 +53,11 @@ print("\n".join(lines))
 
 # Small file the web UI landing page reads, so its numbers are never typed by hand.
 cap = "http_req_duration{scenario:capacity}"
-(out / "stats.json").write_text(json.dumps({
+stats = json.dumps({
     "capacity_p99_ms": round(v(cap, "p(99)"), 1),
     "capacity_rps": round(v("http_reqs{scenario:capacity}", "count") / test_secs),
     "jobs_submitted": submitted,
     "jobs_lost": submitted - sum(jobs.get(s, 0) for s in ("SUCCEEDED", "DEAD")),
-}, indent=1))
+}, indent=1)
+(out / "stats.json").write_text(stats)
+(out.parent / "stats.json").write_text(stats)   # latest run: what the UI landing page shows
