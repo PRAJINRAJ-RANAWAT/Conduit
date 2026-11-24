@@ -11,7 +11,9 @@ subscriber loses its connection it also clears the whole cache when it reconnect
 import asyncio
 import hashlib
 import time
+
 from fastapi import Header, HTTPException
+
 from app import db
 
 TTL_SECONDS = 60        # safety net only; revocation does not wait for this

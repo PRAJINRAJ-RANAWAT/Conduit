@@ -1,6 +1,7 @@
 """Postgres helper. Plain SQL, no ORM: run("SELECT ... WHERE id=%s", (id,)) -> list of dicts."""
 import os
 from pathlib import Path
+
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 

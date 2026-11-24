@@ -10,7 +10,7 @@ docker compose up -d --build
 | What | Where |
 |---|---|
 | UI | http://localhost:3100 |
-| Gateway API | http://localhost:8080 |
+| Gateway API | http://localhost:8080 (NGINX -> 2 gateway replicas) |
 | Mock LLM A / B | :9000 / :9001 |
 | RabbitMQ console | http://localhost:15672 (guest/guest) |
 
@@ -24,9 +24,11 @@ Demo keys: `key-alice` (60k tokens/min), `key-bob` (300 tokens/min), `key-load` 
 | `./demo_queue.sh` | jobs, retries, DLQ, idempotency (takes ~50s) |
 | `./demo_prompts.sh` | prompt optimiser report |
 | `./demo_failover.sh` | provider A fails, B takes over, A recovers |
-| `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pytest` | 25 tests on real Redis/RabbitMQ/Postgres |
-| `./bench/run.sh` | k6 load test -> `bench/results/REPORT.md` |
-| `./chaos/run_all.sh` | 4 failure scenarios -> `chaos/RESULTS.md` |
+| `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pytest` | 29 tests on real Redis/RabbitMQ/Postgres (incl. 2 real gateway replicas) |
+| `./bench/run.sh <label> "<note>"` | k6 load test -> `bench/results/<label>/REPORT.md` |
+| `PYTHONPATH=. .venv/bin/python bench/accuracy.py` | limiter accuracy across 2 replicas |
+| `WORKERS=1 docker compose up -d worker` | change the number of worker replicas (default 3) |
+| `./chaos/run_all.sh` | 5 failure scenarios -> `chaos/RESULTS.md` |
 | `cd web && npm i && node tests/smoke.mjs` | UI smoke test + screenshots in `docs/screenshots/` |
 | `./run_all.sh` | all of the above from a clean start -> `FINAL_RUN.log` |
 
@@ -36,23 +38,27 @@ Demo keys: `key-alice` (60k tokens/min), `key-bob` (300 tokens/min), `key-load` 
 | `app/main.py` | gateway: the whole request flow in one function, `/stats`, CORS |
 | `app/limiter.py` | Redis Lua token bucket + concurrency cap |
 | `app/cache.py` | Redis response cache |
-| `app/providers.py` | provider fallback + circuit breaker |
+| `app/providers.py` | provider fallback + circuit breaker (state in Redis, shared by all replicas) |
 | `app/auth.py`, `app/db.py`, `app/schema.sql` | Postgres tenants, hashed keys, usage |
 | `app/jobs_api.py`, `app/mq.py`, `app/worker.py` | job queue |
 | `app/optimiser.py`, `app/prompts_api.py`, `app/golden.json` | prompt optimisation |
 | `app/mock_provider.py` | fake LLM (can fail on demand; deterministic eval mode) |
+| `deploy/nginx/nginx.conf` | load balancer in front of the 2 gateways |
 | `web/` | Next.js UI (5 pages) |
+| `.github/workflows/ci.yml` | CI: ruff, pytest on real services, gitleaks, Docker build |
 
 Learning notes: `LEARN.md`. Resume bullets: `RESUME.md`.
 
 ## Measured results
-All numbers live in saved files, none are typed here: `bench/results/REPORT.md` (k6), `chaos/RESULTS.md`,
-`FINAL_RUN.log` (last full run). Quality scores in the optimiser come from a deterministic *simulator* and its
-prices are ASSUMED.
+All numbers live in saved files, none are typed here: `bench/results/<run>/REPORT.md` (k6), `bench/results/STEP2_SUMMARY.md`
+(worker scaling, limiter accuracy, revocation, breaker), `chaos/RESULTS.md`, `FINAL_RUN.log` (full run before step 2).
+Headline from step 2 (laptop, mock LLM): backlog drain after load **185 s with 1 worker -> 16 s with 3 workers**; 50 simultaneous requests
+against a 10-request limit across 2 replicas: **exactly 10 pass (3 of 3 runs)**; token over-admission **-0.6%** (never above the limit).
+The optimiser's quality scores come from a deterministic *simulator* and its prices are ASSUMED.
 
 ## Known limits
-- One laptop; k6 shares the CPU with the stack. One gateway process, one worker.
-- Under the k6 load, one worker took ~3 minutes after the load ended to finish 1,101 jobs (it is slower than the submit rate). Add workers to go faster.
-- Circuit-breaker state is per gateway process; a revoked key can be accepted for up to 30s (auth cache).
-- Redis down = chat refuses (fail closed), by design. Postgres-down was not tested.
-- Not pushed to GitHub; the UI "GitHub" button points to `#` until `NEXT_PUBLIC_GITHUB_URL` is set.
+- One laptop; k6 shares the CPU with the stack. Not yet measured on separate machines or on AWS.
+- Redis down = chat refuses (fail closed), by design.
+- While Postgres is down, usage rows are dropped (counted in `/stats` as `usage_rows_dropped`), and a key no gateway has cached cannot be looked up (503).
+- Revoking a key reaches every replica through Redis pub/sub in milliseconds. If a pub/sub message is lost (Redis blip), a 60s cache TTL is the backstop; the subscriber also clears its cache when it reconnects.
+- Admin revoke endpoint uses a shared token (`ADMIN_TOKEN`, default is a dev value: change it in any real deployment).

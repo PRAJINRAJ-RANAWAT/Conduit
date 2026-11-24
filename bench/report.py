@@ -1,11 +1,13 @@
 """Turns bench/results/summary.json (k6 output) + DB counts into bench/results/REPORT.md."""
 import json
+import time
 from pathlib import Path
+
 from app import db
 
-import time
 db.init()
 import sys
+
 out = Path(__file__).parent / "results" / sys.argv[1]   # one folder per run: bench/results/<label>/
 m = json.loads((out / "summary.json").read_text())["metrics"]
 

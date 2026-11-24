@@ -4,14 +4,15 @@ Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle
 """
 import asyncio
 import os
-import redis.asyncio as redis
+import time
 from contextlib import asynccontextmanager
+
+import psycopg
+import redis.asyncio as redis
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import psycopg
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 
-import time
 from app import auth, cache, db, jobs_api, mq, prompts_api, providers, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
@@ -77,6 +78,17 @@ def reject(why: str, retry_after: int):
     return HTTPException(429, why, headers={"Retry-After": str(max(retry_after, 1))})
 
 
+async def record_usage(tenant, provider, in_tokens, out_tokens, latency_ms):
+    """Runs AFTER the answer was sent. If Postgres is down we drop the row and count it. We must never
+    let an error escape here: an exception after the response started breaks the connection (nginx 502)."""
+    try:
+        await asyncio.to_thread(
+            db.run, "INSERT INTO usage (tenant, provider, input_tokens, output_tokens, latency_ms) "
+            "VALUES (%s,%s,%s,%s,%s)", (tenant, provider, in_tokens, out_tokens, latency_ms))
+    except Exception:
+        await stats.incr(r, "usage_rows_dropped")
+
+
 @app.post("/v1/chat/completions")
 async def chat(body: dict, response: Response, bg: BackgroundTasks,
                tenant: dict = Depends(get_tenant)):
@@ -116,9 +128,8 @@ async def chat(body: dict, response: Response, bg: BackgroundTasks,
         response.headers["X-RateLimit-Remaining-Tokens"] = str(left)
         response.headers["X-Conduit-Provider"] = provider
         usage = result["usage"]
-        bg.add_task(db.run, "INSERT INTO usage (tenant, provider, input_tokens, output_tokens, latency_ms) "
-                    "VALUES (%s,%s,%s,%s,%s)", (name, provider, usage["prompt_tokens"],
-                    usage["completion_tokens"], int((time.time() - started) * 1000)))
+        bg.add_task(record_usage, name, provider, usage["prompt_tokens"], usage["completion_tokens"],
+                    int((time.time() - started) * 1000))
         return result
     finally:
         await limiter.release_slot(name, slot)

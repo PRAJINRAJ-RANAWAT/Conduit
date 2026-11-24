@@ -13,6 +13,7 @@ stops calling A too. Keys (per provider NAME):
   cb:NAME:probe    exists = one replica is already running the half-open probe (SET NX = only one wins)
 """
 import os
+
 import httpx
 
 COOLDOWN = float(os.getenv("BREAKER_COOLDOWN", "10"))

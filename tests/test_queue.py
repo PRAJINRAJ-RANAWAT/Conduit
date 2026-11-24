@@ -1,10 +1,10 @@
 """Queue tests: real RabbitMQ + Postgres + a real worker process + a real mock-LLM process."""
-import json
 import os
 import subprocess
 import sys
 import time
 import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 

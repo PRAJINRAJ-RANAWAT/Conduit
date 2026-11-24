@@ -1,6 +1,8 @@
 """Limiter tests against REAL Redis."""
 import asyncio
+
 import redis.asyncio as redis
+
 from app.limiter import Limiter
 
 r = redis.from_url("redis://localhost:6379/1", decode_responses=True)

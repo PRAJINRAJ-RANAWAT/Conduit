@@ -49,26 +49,26 @@ Read the code in this order. Each file is short on purpose.
 
 ## 6. Postgres + auth (`app/db.py`, `app/auth.py`, `app/schema.sql`)
 1. Only a SHA-256 hash of each API key is stored; a database leak does not leak keys.
-2. A 30s in-process cache keeps Postgres out of the hot path; unknown keys are cached too so guessing cannot hammer the DB.
-3. Trade-off: a revoked key can live up to 30s on a gateway that cached it.
+2. A small in-process cache keeps Postgres out of the hot path; unknown keys are cached for 5s so guessing cannot hammer the DB.
+3. Revoking a key publishes its hash on a Redis pub/sub channel; every gateway replica drops it from its own cache at once. The 60s TTL is only a backstop for a lost message.
 4. Plain SQL with a tiny helper: easy to read, easy to explain.
 5. `ON CONFLICT` is how idempotency and seeding stay safe to repeat.
 
-**Questions:** "How do you store API keys?" "Caching vs consistency?" "Indexes: which queries need them?"
+**Questions:** "How do you store API keys?" "Caching vs consistency?" "How do you invalidate a local cache across many servers?" (pub/sub) "What if the invalidation message is lost?" (TTL backstop + clear on reconnect)
 
 ## 7. Failover + circuit breaker (`app/providers.py`)
 1. Try provider A, then B.
 2. After 3 failures in a row the breaker opens: stop calling A for 10s and fail fast.
 3. After the cooldown, ONE probe call decides: success closes the breaker, failure reopens it.
 4. If both are down: fast 503 with `Retry-After` instead of a hang.
-5. Limit: breaker state is per gateway process, not shared.
+5. The breaker state lives in Redis (`cb:A:tripped`, `cb:A:open` with a TTL = the cooldown, `cb:A:probe` set with NX so only ONE replica runs the half-open probe), so all replicas agree.
 
-**Questions:** "What is a circuit breaker?" "How do you avoid a retry storm?" "Shared vs per-instance state?"
+**Questions:** "What is a circuit breaker?" "How do you avoid a retry storm?" "Shared vs per-instance state, and what does sharing cost?" (an extra Redis call per request; if Redis is down we fail closed anyway)
 
 ## 8. Load test and chaos (`bench/`, `chaos/`)
 1. k6 drives three scenarios at once; the report is generated from its raw output, never typed by hand.
 2. Percentiles (p95/p99) matter more than averages because users feel the slow tail.
-3. The load test found a real bottleneck: one worker drains jobs slower than they arrive.
+3. The load test found a real bottleneck: one worker drains jobs slower than they arrive (185s backlog). Three workers cut it to 16s.
 4. Chaos tests were written with expectations *first*; two expectations failed on the first run and led to real fixes (worker reconnect, Redis 503).
 5. Be honest about limits: one laptop, k6 on the same machine, short runs.
 
@@ -80,3 +80,11 @@ Read the code in this order. Each file is short on purpose.
 3. CORS must list the UI origin and *expose* the `X-*` headers, or the browser hides them from JavaScript.
 4. The burst test makes the rate limiter visible: green, amber (cache hit), red (429).
 5. A Playwright test drives the real stack in a real browser.
+
+## 10. Running several copies (step 2)
+1. Two gateways behind NGINX: the limiter, cache and breaker all live in Redis, so the copies agree. Test it with 50 simultaneous requests spread over both.
+2. "Accuracy" of a limiter = over-admission %: tokens actually admitted vs the theoretical maximum (capacity + refill x time). Ours was slightly *under* the maximum.
+3. A bug the chaos test found: an exception inside a background task *after* the response started breaks the kept-alive connection, so the NEXT request gets a 502. Background work must never raise.
+4. CI runs the same tests against real Redis/RabbitMQ/Postgres service containers, so "works on my laptop" is checked.
+
+**Questions:** "How do you scale a stateful-looking service horizontally?" "What breaks when you add a second replica?" "How do you measure a rate limiter's accuracy?"

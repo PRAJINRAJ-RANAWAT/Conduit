@@ -1,10 +1,11 @@
 """Fallback + circuit breaker, against two real mock providers (A :9100, B :9101)."""
 import asyncio
+
 import httpx
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app import auth, db, main, providers
-from httpx import ASGITransport, AsyncClient
 
 H = {"Authorization": "Bearer key-alice"}
 

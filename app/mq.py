@@ -11,6 +11,7 @@ MQ_PREFIX / RETRY_DELAYS_MS let tests use their own short-delay copy of the topo
 import json
 import os
 import threading
+
 import pika
 
 URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/%2F")

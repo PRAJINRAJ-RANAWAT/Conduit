@@ -7,6 +7,7 @@
 import json
 import os
 from pathlib import Path
+
 import httpx
 
 PROVIDER_URL = lambda: os.getenv("PROVIDER_A_URL", "http://localhost:9000")
