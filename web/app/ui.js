@@ -1,5 +1,7 @@
 // Tiny helpers shared by the pages (no libraries).
-export const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY || "http://localhost:8080";
+// Same-origin mode (production image): the browser calls /v1, /jobs ... on the page's own host, NGINX routes them.
+export const GATEWAY = process.env.NEXT_PUBLIC_SAME_ORIGIN ? ""
+  : (process.env.NEXT_PUBLIC_GATEWAY || "http://localhost:8080");
 // Public DEMO keys that are seeded into the local database. Not secrets.
 export const KEYS = { alice: "key-alice", bob: "key-bob" };
 

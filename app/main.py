@@ -158,6 +158,20 @@ def scheduler_stats() -> dict:
             "dispatcher_leader": leader[0]["host"] if leader else None}
 
 
+@app.get("/healthz")
+async def healthz():
+    """Liveness: the process is up."""
+    return {"ok": True}
+
+
+@app.get("/readyz")
+async def readyz():
+    """Readiness (used by deploys): can this replica reach Redis and Postgres? 503 if not."""
+    await r.ping()
+    await asyncio.to_thread(db.run, "SELECT 1")
+    return {"ok": True}
+
+
 @app.get("/stats")
 async def get_stats():
     """Real counters for the UI Metrics page (Redis counters + live queue sizes + job counts)."""

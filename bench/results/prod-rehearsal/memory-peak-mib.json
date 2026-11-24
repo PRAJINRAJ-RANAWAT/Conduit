@@ -1,0 +1,15 @@
+{
+ "conduitprod-dispatcher-1": 25.3,
+ "conduitprod-dispatcher-2": 25.4,
+ "conduitprod-gateway-1-1": 60.5,
+ "conduitprod-gateway-2-1": 60.9,
+ "conduitprod-mock-a-1": 34.3,
+ "conduitprod-mock-b-1": 32.3,
+ "conduitprod-nginx-1": 16.2,
+ "conduitprod-postgres-1": 71.1,
+ "conduitprod-rabbitmq-1": 195.4,
+ "conduitprod-redis-1": 15.4,
+ "conduitprod-web-1": 33.2,
+ "conduitprod-worker-1": 50.5,
+ "conduitprod-worker-2": 50.1
+}

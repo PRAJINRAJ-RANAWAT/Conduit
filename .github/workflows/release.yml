@@ -1,0 +1,74 @@
+# Build multi-arch (amd64 + arm64) images.
+#   pull request  -> build both architectures, do NOT push (proves the ARM64 build works)
+#   push to main  -> build, push to GHCR tagged with the git SHA, then (if enabled) deploy to the AWS instance
+#
+# The deploy job only runs when the repository variable DEPLOY_ENABLED is "true", so nothing is deployed (and
+# nothing in AWS is touched) until infrastructure exists and you switch it on.
+# Needed repository variables for deploy: DEPLOY_ENABLED, AWS_DEPLOY_ROLE_ARN, AWS_REGION, INSTANCE_ID, DOMAIN
+name: Images and deploy
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    strategy:
+      matrix:
+        include:
+          - {name: conduit-app, context: ., build_args: ""}
+          - {name: conduit-web, context: ./web, build_args: "NEXT_PUBLIC_SAME_ORIGIN=1"}   # production UI calls the API on its own host
+    steps:
+      - uses: actions/checkout@v4
+      - id: owner                      # GHCR needs a lowercase name
+        run: echo "lower=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3        # lets the amd64 runner build arm64 images
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          build-args: ${{ matrix.build_args }}
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.lower }}/${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ steps.owner.outputs.lower }}/${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: images
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions: {id-token: write, contents: read}    # id-token: lets GitHub prove its identity to AWS (OIDC)
+    concurrency: deploy                                # never two deploys at once
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Send the deploy files and run deploy.sh on the instance (SSM Run Command, no SSH)
+        run: |
+          mkdir -p bundle/bench && cp -r deploy/prod/. bundle/ && cp bench/results/stats.json bundle/bench/ 2>/dev/null || true
+          B64=$(tar -czf - -C bundle . | base64 -w0)
+          CMD_ID=$(aws ssm send-command --instance-ids "${{ vars.INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript --timeout-seconds 900 \
+            --parameters "commands=[\"mkdir -p /opt/conduit && echo $B64 | base64 -d | tar -xz -C /opt/conduit && chmod +x /opt/conduit/*.sh && /opt/conduit/deploy.sh ${{ github.sha }}\"]" \
+            --query Command.CommandId --output text)
+          echo "command id: $CMD_ID"
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "${{ vars.INSTANCE_ID }}" || true
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${{ vars.INSTANCE_ID }}" \
+            --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
+          STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${{ vars.INSTANCE_ID }}" --query Status --output text)
+          [ "$STATUS" = "Success" ]
+      - name: Smoke test the live URL
+        run: |
+          curl -fsS --retry 10 --retry-delay 5 "https://${{ vars.DOMAIN }}/healthz"
+          curl -fsS "https://${{ vars.DOMAIN }}/readyz"
+          curl -fsS "https://${{ vars.DOMAIN }}/" -o /dev/null

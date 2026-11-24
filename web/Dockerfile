@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+ARG NEXT_PUBLIC_SAME_ORIGIN=""
+ENV NEXT_PUBLIC_SAME_ORIGIN=$NEXT_PUBLIC_SAME_ORIGIN
 RUN npm run build
 
 FROM node:22-alpine

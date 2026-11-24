@@ -51,6 +51,10 @@ Demo keys: `key-alice` (60k tokens/min), `key-bob` (300 tokens/min), `key-load` 
 | `deploy/nginx/nginx.conf` | load balancer in front of the 2 gateways |
 | `web/` | Next.js UI (5 pages) |
 | `.github/workflows/ci.yml` | CI: ruff, pytest on real services, gitleaks, Docker build |
+| `.github/workflows/release.yml` | multi-arch (amd64+arm64) images to GHCR; deploy to AWS over SSM (off until `DEPLOY_ENABLED=true`) |
+| `infra/terraform/` | AWS: EC2 (ARM64) + Elastic IP, 80/443-only security group, SSM secrets, S3 backups, Budgets alarm, GitHub OIDC role |
+| `deploy/prod/` | production compose (memory limits, Redis AOF), NGINX + TLS, `deploy.sh` (rolling restart + rollback), backup/restore scripts |
+| `docs/DEPLOYMENT.md` | run steps, rollback, backup/restore, secret rotation, cost, memory budget |
 
 Learning notes: `LEARN.md`. Resume bullets: `RESUME.md`.
 
@@ -62,6 +66,11 @@ against a 10-request limit across 2 replicas: **exactly 10 pass (3 of 3 runs)**;
 Headline from step 3 (laptop, mock LLM): a tenant flooding 20 jobs/s made a quiet tenant's jobs wait **p99 26 s with plain FIFO dispatch vs 0.4 s with the
 fair dispatcher** (max 6 jobs in flight; 4.4 s with 50 in flight); killing the active dispatcher mid-batch of 5,000 jobs: standby leader after **0.31 s**, 0 lost, 0 duplicates.
 The optimiser's quality scores come from a deterministic *simulator* and its prices are ASSUMED.
+
+## Deployment (written and rehearsed locally; NOT yet on AWS)
+See `docs/DEPLOYMENT.md`. Verified on a laptop with the production compose file: the stack peaks at about **671 MiB** under the k6 load (limits in the file, no OOM kills),
+a rolling restart of both gateways under traffic returned **49 of 49** 200s, and a database dump restored with matching row counts. `terraform validate` passes;
+`terraform plan/apply`, `deploy.sh` and Let's Encrypt have **not** been run because there is no AWS account access yet. Expected cost: about $17.5/month (ESTIMATE).
 
 ## Known limits
 - One laptop; k6 shares the CPU with the stack. Not yet measured on separate machines or on AWS.
