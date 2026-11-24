@@ -29,6 +29,7 @@ def seed():
     """Demo tenants for the playground and tests."""
     create_tenant("alice", 60_000, 20, "key-alice")
     create_tenant("bob", 300, 2, "key-bob")
+    create_tenant("loadtest", 1_000_000_000, 5000, "key-load")   # huge quota: for benchmarks
 
 
 def get_tenant(authorization: str = Header(default="")) -> dict:

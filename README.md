@@ -46,3 +46,7 @@ Tenants, hashed API keys and usage rows live in Postgres (`app/schema.sql`). The
 provider A, then B; a circuit breaker (3 failures -> open 10s -> half-open probe) stops hammering a dead
 provider. If both are down: fast 503 with `Retry-After`. `./demo_failover.sh` shows it.
 Note: breaker state is per gateway process, and a revoked key can take up to 30s to be noticed (auth cache).
+
+## Load test (step 5)
+`./bench/run.sh` runs k6 (in Docker) against the whole stack and writes `bench/results/REPORT.md`
+(raw data and summary alongside). Latest measured numbers are in that file, nothing here is hand-typed.
