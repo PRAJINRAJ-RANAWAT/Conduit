@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import httpx
 
-PROVIDER_URL = lambda: os.getenv("PROVIDER_URL", "http://localhost:9000")
+PROVIDER_URL = lambda: os.getenv("PROVIDER_A_URL", "http://localhost:9000")
 GOLDEN = json.loads(Path(__file__).with_name("golden.json").read_text())
 # ASSUMED prices (dollars per million tokens). Not a real provider's price list.
 PRICE_IN, PRICE_OUT = 0.50, 1.50

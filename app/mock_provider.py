@@ -8,9 +8,16 @@ nothing about real model quality.
 """
 import asyncio
 import hashlib
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 app = FastAPI()
+state = {"fail": False}   # flip with POST /admin/fail to simulate an outage
+
+
+@app.post("/admin/fail")
+async def set_fail(body: dict):
+    state["fail"] = bool(body["on"])
+    return state
 
 
 def eval_accuracy(prompt: str) -> int:
@@ -34,6 +41,8 @@ def eval_reply(body: dict) -> str:
 
 @app.post("/v1/chat/completions")
 async def chat(body: dict):
+    if state["fail"]:
+        raise HTTPException(500, "provider is down (simulated)")
     last = body["messages"][-1]["content"]
     if body.get("eval_mode"):
         reply = eval_reply(body)

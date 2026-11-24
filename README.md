@@ -40,3 +40,9 @@ Prompt versions are immutable (a Postgres trigger refuses edits). `POST /prompts
 version on a 20-example golden set and picks the fewest-token version within `epsilon` of the baseline.
 Quality comes from a deterministic *simulator* in the mock LLM, and prices are ASSUMED, so the
 "% saved" shows the pipeline works, not real-model savings. `./demo_prompts.sh` prints the report.
+
+## Postgres + failover (step 4)
+Tenants, hashed API keys and usage rows live in Postgres (`app/schema.sql`). The gateway tries
+provider A, then B; a circuit breaker (3 failures -> open 10s -> half-open probe) stops hammering a dead
+provider. If both are down: fast 503 with `Retry-After`. `./demo_failover.sh` shows it.
+Note: breaker state is per gateway process, and a revoked key can take up to 30s to be noticed (auth cache).

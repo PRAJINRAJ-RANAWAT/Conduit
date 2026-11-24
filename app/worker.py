@@ -10,7 +10,9 @@ import os
 import httpx
 from app import db, mq
 
-PROVIDER_URL = os.getenv("PROVIDER_URL", "http://localhost:9000")
+# Try provider A, then B (the gateway has a circuit breaker; the worker just falls back).
+PROVIDER_URLS = [os.getenv("PROVIDER_A_URL", "http://localhost:9000"),
+                 os.getenv("PROVIDER_B_URL", "http://localhost:9001")]
 
 
 def claim(job_id: str, redelivered: bool):
@@ -26,9 +28,14 @@ def do_work(job) -> dict:
     if job["attempts"] <= job["fail_times"]:      # demo switch: simulate a failing job
         raise RuntimeError(f"simulated failure on attempt {job['attempts']}")
     body = {"messages": [{"role": "user", "content": job["prompt"]}], "max_tokens": 20}
-    resp = httpx.post(f"{PROVIDER_URL}/v1/chat/completions", json=body, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+    for url in PROVIDER_URLS:
+        try:
+            resp = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            continue
+    raise RuntimeError("all providers failed")
 
 
 def handle(pub, ch, method, props, body):

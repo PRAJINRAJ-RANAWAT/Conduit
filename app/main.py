@@ -3,21 +3,21 @@
 Flow: API key -> concurrency slot -> token reservation -> cache -> LLM -> settle real usage
 """
 import os
-import httpx
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 
-from app import cache, db, jobs_api, prompts_api, stats
+import time
+from app import auth, cache, db, jobs_api, prompts_api, providers, stats
 from app.auth import get_tenant
 from app.limiter import Limiter
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-PROVIDER_URL = os.getenv("PROVIDER_URL", "http://localhost:9000")
 
 @asynccontextmanager
 async def lifespan(_):
     db.init()
+    auth.seed()
     prompts_api.seed()
     yield
 
@@ -40,7 +40,9 @@ def reject(why: str, retry_after: int):
 
 
 @app.post("/v1/chat/completions")
-async def chat(body: dict, response: Response, tenant: dict = Depends(get_tenant)):
+async def chat(body: dict, response: Response, bg: BackgroundTasks,
+               tenant: dict = Depends(get_tenant)):
+    started = time.time()
     name, tpm = tenant["name"], tenant["tpm"]
     await stats.incr(r, "requests")
 
@@ -61,17 +63,24 @@ async def chat(body: dict, response: Response, tenant: dict = Depends(get_tenant
             left = await limiter.settle(name, tpm, cost, 0)
             await stats.incr(r, "cache_hit")
             response.headers["X-Conduit-Cache"] = "hit"
+            provider = "cache"
         else:
-            async with httpx.AsyncClient(timeout=30) as client:
-                up = await client.post(f"{PROVIDER_URL}/v1/chat/completions", json=body)
-            up.raise_for_status()
-            result = up.json()
+            try:
+                result, provider = await providers.call(body)
+            except providers.AllProvidersDown:
+                await limiter.settle(name, tpm, cost, 0)       # nothing was used: refund
+                raise HTTPException(503, "all providers are down", headers={"Retry-After": "10"})
             used = result["usage"]["prompt_tokens"] + result["usage"]["completion_tokens"]
             left = await limiter.settle(name, tpm, cost, used)  # refund or charge the gap
             await cache.put(r, key, result)
             await stats.incr(r, "cache_miss")
             response.headers["X-Conduit-Cache"] = "miss"
         response.headers["X-RateLimit-Remaining-Tokens"] = str(left)
+        response.headers["X-Conduit-Provider"] = provider
+        usage = result["usage"]
+        bg.add_task(db.run, "INSERT INTO usage (tenant, provider, input_tokens, output_tokens, latency_ms) "
+                    "VALUES (%s,%s,%s,%s,%s)", (name, provider, usage["prompt_tokens"],
+                    usage["completion_tokens"], int((time.time() - started) * 1000)))
         return result
     finally:
         await limiter.release_slot(name, slot)
